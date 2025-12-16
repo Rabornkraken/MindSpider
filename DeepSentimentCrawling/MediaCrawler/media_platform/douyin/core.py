@@ -11,9 +11,12 @@
 import asyncio
 import os
 import random
+import re
+import time
 from asyncio import Task
 from typing import Any, Dict, List, Optional, Tuple
 
+import httpx
 from playwright.async_api import (
     BrowserContext,
     BrowserType,
@@ -21,6 +24,7 @@ from playwright.async_api import (
     Playwright,
     async_playwright,
 )
+from playwright_stealth import Stealth
 
 import config
 from base.base_crawler import AbstractCrawler
@@ -74,7 +78,9 @@ class DouYinCrawler(AbstractCrawler):
                     headless=config.HEADLESS,
                 )
             # stealth.min.js is a js script to prevent the website from detecting the crawler.
-            await self.browser_context.add_init_script(path="libs/stealth.min.js")
+            # await self.browser_context.add_init_script(path="libs/stealth.min.js")
+            stealth = Stealth()
+            await stealth.apply_stealth_async(self.browser_context)
             self.context_page = await self.browser_context.new_page()
             await self.context_page.goto(self.index_url)
 
@@ -128,7 +134,7 @@ class DouYinCrawler(AbstractCrawler):
                         search_id=dy_search_id,
                     )
                     if posts_res.get("data") is None or posts_res.get("data") == []:
-                        utils.logger.info(f"[DouYinCrawler.search] search douyin keyword: {keyword}, page: {page} is empty,{posts_res.get('data')}`")
+                        utils.logger.info(f"[DouYinCrawler.search] search douyin keyword: {keyword}, page: {page} is empty. Response: {posts_res}")
                         break
                 except DataFetchError:
                     utils.logger.error(f"[DouYinCrawler.search] search douyin keyword: {keyword} failed")
@@ -187,7 +193,14 @@ class DouYinCrawler(AbstractCrawler):
             task = asyncio.create_task(self.get_comments(aweme_id, semaphore), name=aweme_id)
             task_list.append(task)
         if len(task_list) > 0:
-            await asyncio.wait(task_list)
+            done, pending = await asyncio.wait(task_list)
+            for task in done:
+                try:
+                    task.result()
+                except Exception as e:
+                    utils.logger.error(f"[DouYinCrawler.batch_get_note_comments] task failed: {task.get_name()}, err: {e}")
+            for task in pending:
+                task.cancel()
 
     async def get_comments(self, aweme_id: str, semaphore: asyncio.Semaphore) -> None:
         async with semaphore:
@@ -203,22 +216,84 @@ class DouYinCrawler(AbstractCrawler):
                 utils.logger.info(f"[DouYinCrawler.get_comments] aweme_id: {aweme_id} comments have all been obtained and filtered ...")
             except DataFetchError as e:
                 utils.logger.error(f"[DouYinCrawler.get_comments] aweme_id: {aweme_id} get comments failed, error: {e}")
+            except Exception as e:
+                utils.logger.error(f"[DouYinCrawler.get_comments] aweme_id: {aweme_id} unexpected error: {e}")
 
     async def get_creators_and_videos(self) -> None:
         """
         Get the information and videos of the specified creator
         """
         utils.logger.info("[DouYinCrawler.get_creators_and_videos] Begin get douyin creators")
-        for user_id in config.DY_CREATOR_ID_LIST:
-            creator_info: Dict = await self.dy_client.get_user_info(user_id)
-            if creator_info:
-                await douyin_store.save_creator(user_id, creator=creator_info)
+        for creator in config.DY_CREATOR_ID_LIST:
+            sec_user_id = creator
+            
+            # Support passing creator share/profile URLs directly (e.g. https://v.douyin.com/xxxx/).
+            if isinstance(creator, str) and creator.startswith(("http://", "https://")):
+                resolved_uid = await self._resolve_url_to_sec_uid(creator)
+                if resolved_uid:
+                    utils.logger.info(f"[DouYinCrawler] Resolved {creator} to sec_uid: {resolved_uid}")
+                    sec_user_id = resolved_uid
+                else:
+                    utils.logger.warning(f"[DouYinCrawler] Failed to resolve URL to sec_uid: {creator}, falling back to browser extraction.")
+                    await self.fetch_one_video_from_creator_page(creator_page_url=creator)
+                    continue
 
-            # Get all video information of the creator
-            all_video_list = await self.dy_client.get_all_user_aweme_posts(sec_user_id=user_id, callback=self.fetch_creator_video_detail)
+            try:
+                creator_info: Dict = await self.dy_client.get_user_info(sec_user_id)
+                if creator_info:
+                    await douyin_store.save_creator(sec_user_id, creator=creator_info)
 
-            video_ids = [video_item.get("aweme_id") for video_item in all_video_list]
-            await self.batch_get_note_comments(video_ids)
+                # Get latest videos (first page only) to optimize for updates
+                aweme_post_res = await self.dy_client.get_user_aweme_posts(sec_user_id)
+                all_video_list = aweme_post_res.get("aweme_list", [])
+                
+                # Limit to 5 most recent
+                all_video_list = all_video_list[:5]
+                
+                if all_video_list:
+                    # Duplicate Detection
+                    candidate_ids = [v['aweme_id'] for v in all_video_list]
+                    existing_ids = await douyin_store.get_existing_aweme_ids(candidate_ids)
+                    
+                    new_videos = [v for v in all_video_list if v['aweme_id'] not in existing_ids]
+                    
+                    utils.logger.info(f"[DouYinCrawler] Found {len(all_video_list)} recent videos. {len(existing_ids)} exist in DB. Processing {len(new_videos)} new videos.")
+                    
+                    if new_videos:
+                        await self.fetch_creator_video_detail(new_videos)
+                else:
+                    utils.logger.info(f"[DouYinCrawler] No videos found for creator {sec_user_id}")
+
+            except DataFetchError as ex:
+                # If the JSON API is blocked/empty, fall back to browser-only extraction for 1 video.
+                utils.logger.warning(
+                    f"[DouYinCrawler.get_creators_and_videos] API blocked for sec_user_id={sec_user_id}, "
+                    f"fallback to browser extraction. err={ex}"
+                )
+                await self.fetch_one_video_from_creator_page(creator_page_url=f"{self.index_url}/user/{sec_user_id}")
+
+    async def _resolve_url_to_sec_uid(self, url: str) -> Optional[str]:
+        """
+        Resolve a Douyin short link or profile URL to a sec_user_id.
+        """
+        try:
+            async with httpx.AsyncClient() as client:
+                res = await client.get(url, follow_redirects=True, headers={"User-Agent": utils.get_mobile_user_agent()})
+                long_url = str(res.url)
+                
+                # Check for user profile sec_uid in URL params
+                # Example: ...?sec_uid=MS4wLjABAAAA...
+                match = re.search(r'sec_uid=([A-Za-z0-9_-]+)', long_url)
+                if match:
+                    return match.group(1)
+                
+                # Check if it's a video link, maybe we can get author ID?
+                # Usually video links don't have sec_uid in URL, but the page content does.
+                # For now, only support profile links that have sec_uid in URL.
+                return None
+        except Exception as e:
+            utils.logger.error(f"[DouYinCrawler] Error resolving URL {url}: {e}")
+            return None
 
     async def fetch_creator_video_detail(self, video_list: List[Dict]):
         """
@@ -232,6 +307,167 @@ class DouYinCrawler(AbstractCrawler):
             if aweme_item is not None:
                 await douyin_store.update_douyin_aweme(aweme_item=aweme_item)
                 await self.get_aweme_media(aweme_item=aweme_item)
+
+    async def fetch_one_video_from_creator_page(self, creator_page_url: str) -> None:
+        """
+        Browser-only fallback path:
+        - open creator share/profile URL
+        - extract one aweme_id
+        - open video page and capture a playable mp4 URL
+        - store minimal metadata + download video (transcription happens in store layer)
+        """
+        page = await self.browser_context.new_page()
+        try:
+            await page.goto(creator_page_url, wait_until="domcontentloaded", timeout=60_000)
+            await page.wait_for_timeout(1500)
+
+            aweme_id = self._extract_aweme_id_from_url(page.url) or await self._extract_first_aweme_id_from_page(page)
+            if not aweme_id:
+                utils.logger.error(f"[DouYinCrawler.fetch_one_video_from_creator_page] No aweme_id found from: {creator_page_url}")
+                return
+
+            video_page_url = f"{self.index_url}/video/{aweme_id}"
+            video_url = await self._capture_first_video_url_from_video_page(page, video_page_url=video_page_url)
+            if not video_url:
+                utils.logger.error(f"[DouYinCrawler.fetch_one_video_from_creator_page] No video url captured for aweme_id={aweme_id}")
+                return
+
+            desc = await self._safe_extract_desc(page) or f"Douyin video {aweme_id}"
+            now_ts = int(time.time())
+            minimal_aweme_item: Dict[str, Any] = {
+                "aweme_id": aweme_id,
+                "aweme_type": 0,
+                "desc": desc,
+                "create_time": now_ts,
+                "author": {},
+                "statistics": {},
+                "video": {
+                    "play_addr": {"url_list": [video_url, video_url]},
+                },
+            }
+
+            await douyin_store.update_douyin_aweme(aweme_item=minimal_aweme_item)
+            await self.get_aweme_media(aweme_item=minimal_aweme_item)
+        finally:
+            await page.close()
+
+    @staticmethod
+    def _extract_aweme_id_from_url(url: str) -> Optional[str]:
+        for pattern in (r"/video/(\d+)", r"[?&]modal_id=(\d+)", r"[?&]aweme_id=(\d+)"):
+            m = re.search(pattern, url)
+            if m:
+                return m.group(1)
+        return None
+
+    async def _extract_first_aweme_id_from_page(self, page: Page) -> Optional[str]:
+        # 1) Try DOM links first (works when the creator grid is rendered).
+        try:
+            aweme_id = await page.evaluate(
+                """
+                () => {
+                  const anchors = Array.from(document.querySelectorAll('a[href*="/video/"]'));
+                  for (const a of anchors) {
+                    const href = a.getAttribute('href') || '';
+                    const m = href.match(/\\/video\\/(\\d+)/);
+                    if (m) return m[1];
+                  }
+                  return null;
+                }
+                """
+            )
+            if aweme_id:
+                return str(aweme_id)
+        except Exception:
+            pass
+
+        # 2) Scroll a bit to trigger rendering / lazy loading, then retry.
+        for _ in range(3):
+            try:
+                await page.evaluate("() => window.scrollBy(0, Math.max(800, window.innerHeight))")
+                await page.wait_for_timeout(800)
+                aweme_id = await page.evaluate(
+                    """
+                    () => {
+                      const anchors = Array.from(document.querySelectorAll('a[href*="/video/"]'));
+                      for (const a of anchors) {
+                        const href = a.getAttribute('href') || '';
+                        const m = href.match(/\\/video\\/(\\d+)/);
+                        if (m) return m[1];
+                      }
+                      return null;
+                    }
+                    """
+                )
+                if aweme_id:
+                    return str(aweme_id)
+            except Exception:
+                break
+
+        # 3) Fallback to regex on HTML.
+        try:
+            html = await page.content()
+            for pattern in (r"/video/(\d+)", r"\"aweme_id\"\\s*:\\s*\"?(\\d+)\"?"):
+                m = re.search(pattern, html)
+                if m:
+                    return m.group(1)
+        except Exception:
+            pass
+
+        return None
+
+    async def _capture_first_video_url_from_video_page(self, page: Page, video_page_url: str) -> Optional[str]:
+        loop = asyncio.get_running_loop()
+        captured: asyncio.Future = loop.create_future()
+
+        def on_response(resp):
+            if captured.done():
+                return
+            try:
+                ct = (resp.headers.get("content-type") or "").lower()
+                url = resp.url
+                is_video_ct = ct.startswith("video/") or ("video" in ct and "mp4" in ct)
+                looks_like_mp4 = ".mp4" in url
+                if is_video_ct or looks_like_mp4:
+                    captured.set_result(url)
+            except Exception:
+                return
+
+        page.on("response", on_response)
+        await page.goto(video_page_url, wait_until="domcontentloaded", timeout=60_000)
+
+        # Some pages only start requesting media after play; attempt to trigger playback.
+        try:
+            await page.wait_for_timeout(800)
+            await page.click("video", timeout=3_000)
+        except Exception:
+            pass
+
+        try:
+            return await asyncio.wait_for(captured, timeout=30)
+        except asyncio.TimeoutError:
+            # Try DOM-based extraction as a last resort (when video uses direct src).
+            try:
+                src = await page.eval_on_selector("video", "el => el.currentSrc || el.src")
+                if isinstance(src, str) and src.startswith("http"):
+                    return src
+            except Exception:
+                pass
+            return None
+
+    async def _safe_extract_desc(self, page: Page) -> str:
+        try:
+            title = await page.title()
+            if title:
+                return title.strip()
+        except Exception:
+            pass
+        try:
+            og = await page.eval_on_selector('meta[property="og:title"]', "el => el.content")
+            if og:
+                return str(og).strip()
+        except Exception:
+            pass
+        return ""
 
     async def create_douyin_client(self, httpx_proxy: Optional[str]) -> DouYinClient:
         """Create douyin client"""
@@ -260,7 +496,10 @@ class DouYinCrawler(AbstractCrawler):
     ) -> BrowserContext:
         """Launch browser and create browser context"""
         if config.SAVE_LOGIN_STATE:
-            user_data_dir = os.path.join(os.getcwd(), "browser_data", config.USER_DATA_DIR % config.PLATFORM)  # type: ignore
+            # Fix: Use path relative to MediaCrawler root, not CWD
+            media_crawler_root = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+            user_data_dir = os.path.join(media_crawler_root, "browser_data", config.USER_DATA_DIR % config.PLATFORM)
+            
             browser_context = await chromium.launch_persistent_context(
                 user_data_dir=user_data_dir,
                 accept_downloads=True,
@@ -390,4 +629,5 @@ class DouYinCrawler(AbstractCrawler):
         if content is None:
             return
         extension_file_name = f"video.mp4"
-        await douyin_store.update_dy_aweme_video(aweme_id, content, extension_file_name)
+        title = aweme_item.get("desc", "")
+        await douyin_store.update_dy_aweme_video(aweme_id, content, extension_file_name, title)

@@ -23,7 +23,7 @@ except ImportError as e:
     raise ImportError(f"导入模块失败: {e}")
 
 # 新闻API基础URL
-BASE_URL = "https://newsnow.busiyi.world"
+BASE_URL = "http://localhost:4444"
 
 # 新闻源中文名称映射
 SOURCE_NAMES = {

@@ -16,11 +16,26 @@
 # @Desc    : 获取 a_bogus 参数, 学习交流使用，请勿用作商业用途，侵权联系作者删除
 
 import random
+from pathlib import Path
 
 import execjs
 from playwright.async_api import Page
 
-douyin_sign_obj = execjs.compile(open('libs/douyin.js', encoding='utf-8-sig').read())
+def _find_repo_file(relative_path: str) -> Path:
+    """
+    Resolve repo-relative files (like `libs/douyin.js`) regardless of current working directory.
+    """
+    here = Path(__file__).resolve()
+    for parent in [here, *here.parents]:
+        candidate = parent / relative_path
+        if candidate.exists():
+            return candidate
+    # Fall back to cwd-relative path as a last resort (keeps previous behavior).
+    return Path(relative_path)
+
+
+_DOUYIN_JS_PATH = _find_repo_file("libs/douyin.js")
+douyin_sign_obj = execjs.compile(_DOUYIN_JS_PATH.read_text(encoding="utf-8-sig"))
 
 def get_web_id():
     """
@@ -82,4 +97,3 @@ async def get_a_bogus_from_playright(params: str, post_data: dict, user_agent: s
         [params, post_data, user_agent])
 
     return a_bogus
-

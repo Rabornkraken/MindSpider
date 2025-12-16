@@ -46,6 +46,10 @@ class DouYinLogin(AbstractLogin):
             Start login douyin website
             滑块中间页面的验证准确率不太OK... 如果没有特俗要求，建议不开抖音登录，或者使用cookies登录
         """
+        utils.logger.info("[DouYinLogin.begin] Checking if already logged in...")
+        if await self.check_login_state():
+            utils.logger.info("[DouYinLogin.begin] Already logged in, skipping login process.")
+            return
 
         # popup login dialog
         await self.popup_login_dialog()
@@ -71,8 +75,8 @@ class DouYinLogin(AbstractLogin):
         try:
             await self.check_login_state()
         except RetryError:
-            utils.logger.info("[DouYinLogin.begin] login failed please confirm ...")
-            sys.exit()
+            utils.logger.info("[DouYinLogin.begin] login state check failed, but continuing... (Maybe guest mode?)")
+            # sys.exit()
 
         # wait for redirect
         wait_redirect_seconds = 5
@@ -115,13 +119,22 @@ class DouYinLogin(AbstractLogin):
     async def login_by_qrcode(self):
         utils.logger.info("[DouYinLogin.login_by_qrcode] Begin login douyin by qrcode...")
         qrcode_img_selector = "xpath=//div[@id='animate_qrcode_container']//img"
-        base64_qrcode_img = await utils.find_login_qrcode(
-            self.context_page,
-            selector=qrcode_img_selector
-        )
+        try:
+            base64_qrcode_img = await utils.find_login_qrcode(
+                self.context_page,
+                selector=qrcode_img_selector
+            )
+        except Exception:
+            # If standard util fails or timeouts, we handle it here
+            base64_qrcode_img = None
+
         if not base64_qrcode_img:
-            utils.logger.info("[DouYinLogin.login_by_qrcode] login qrcode not found please confirm ...")
-            sys.exit()
+            # Try waiting longer manually if utils.find_login_qrcode didn't wait long enough
+            # But actually find_login_qrcode uses default timeout.
+            # Let's just log and wait for manual login if QR not found automatically
+            utils.logger.info("[DouYinLogin.login_by_qrcode] QR code auto-detection failed. Please login manually (Scan or Phone)...")
+            # Do NOT exit, just return to allow the main loop to check login state
+            return
 
         partial_show_qrcode = functools.partial(utils.show_qrcode, base64_qrcode_img)
         asyncio.get_running_loop().run_in_executor(executor=None, func=partial_show_qrcode)

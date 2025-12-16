@@ -43,19 +43,35 @@ class CDPBrowserManager:
         启动浏览器并通过CDP连接
         """
         try:
-            # 1. 检测浏览器路径
-            browser_path = await self._get_browser_path()
+            # 1. 尝试直接连接到配置的端口 (例如 9222)
+            # 如果用户手动启动了浏览器，该端口应该是通的
+            target_port = config.CDP_DEBUG_PORT
+            if await self._test_cdp_connection(target_port):
+                utils.logger.info(f"[CDPBrowserManager] 检测到端口 {target_port} 已开放，尝试直接连接")
+                self.debug_port = target_port
+            else:
+                # 2. 如果端口未开放，则自动检测路径并启动新浏览器
+                utils.logger.info(f"[CDPBrowserManager] 端口 {target_port} 未开放，尝试启动新浏览器")
+                browser_path = await self._get_browser_path()
+                
+                # 获取可用端口 (优先使用配置端口)
+                try:
+                    # 检查配置端口是否可用 (未被占用)
+                    with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
+                        s.bind(('localhost', target_port))
+                    self.debug_port = target_port
+                except OSError:
+                    # 端口被占用但无法连接CDP? 可能是其他程序。寻找新端口
+                    utils.logger.warning(f"[CDPBrowserManager] 端口 {target_port} 被占用且非CDP，寻找新端口")
+                    self.debug_port = self.launcher.find_available_port(target_port + 1)
 
-            # 2. 获取可用端口
-            self.debug_port = self.launcher.find_available_port(config.CDP_DEBUG_PORT)
+                # 启动浏览器
+                await self._launch_browser(browser_path, headless)
 
-            # 3. 启动浏览器
-            await self._launch_browser(browser_path, headless)
-
-            # 4. 通过CDP连接
+            # 3. 通过CDP连接
             await self._connect_via_cdp(playwright)
 
-            # 5. 创建浏览器上下文
+            # 4. 创建浏览器上下文
             browser_context = await self._create_browser_context(
                 playwright_proxy, user_agent
             )
@@ -128,8 +144,10 @@ class CDPBrowserManager:
         # 设置用户数据目录（如果启用了保存登录状态）
         user_data_dir = None
         if config.SAVE_LOGIN_STATE:
+            # Fix: Use path relative to MediaCrawler root
+            media_crawler_root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
             user_data_dir = os.path.join(
-                os.getcwd(),
+                media_crawler_root,
                 "browser_data",
                 f"cdp_{config.USER_DATA_DIR % config.PLATFORM}",
             )

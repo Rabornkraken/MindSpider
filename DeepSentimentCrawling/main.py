@@ -25,7 +25,7 @@ class DeepSentimentCrawling:
         """初始化深度情感爬取"""
         self.keyword_manager = KeywordManager()
         self.platform_crawler = PlatformCrawler()
-        self.supported_platforms = ['xhs', 'dy', 'ks', 'bili', 'wb', 'tieba', 'zhihu']
+        self.supported_platforms = ['xhs', 'dy', 'ks', 'bili', 'wb', 'tieba', 'zhihu', 'xueqiu', 'youtube']
     
     def run_daily_crawling(self, target_date: date = None, platforms: List[str] = None, 
                           max_keywords_per_platform: int = 50, 
@@ -193,10 +193,10 @@ def main():
     
     # 基本参数
     parser.add_argument("--date", type=str, help="目标日期 (YYYY-MM-DD)，默认为今天")
-    parser.add_argument("--platform", type=str, choices=['xhs', 'dy', 'ks', 'bili', 'wb', 'tieba', 'zhihu'], 
+    parser.add_argument("--platform", type=str, choices=['xhs', 'dy', 'ks', 'bili', 'wb', 'tieba', 'zhihu', 'xueqiu', 'youtube'], 
                        help="指定单个平台进行爬取")
     parser.add_argument("--platforms", type=str, nargs='+', 
-                       choices=['xhs', 'dy', 'ks', 'bili', 'wb', 'tieba', 'zhihu'],
+                       choices=['xhs', 'dy', 'ks', 'bili', 'wb', 'tieba', 'zhihu', 'xueqiu', 'youtube'],
                        help="指定多个平台进行爬取")
     
     # 爬取参数

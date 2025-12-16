@@ -17,6 +17,7 @@
 
 import asyncio
 import time
+import weakref
 from typing import Any, Dict, List, Optional, Tuple
 
 from cache.abs_cache import AbstractCache
@@ -33,8 +34,9 @@ class ExpiringLocalCache(AbstractCache):
         self._cron_interval = cron_interval
         self._cache_container: Dict[str, Tuple[Any, float]] = {}
         self._cron_task: Optional[asyncio.Task] = None
-        # 开启定时清理任务
-        self._schedule_clear()
+        _ALL_LOCAL_CACHES.add(self)
+        # 开启定时清理任务（仅在事件循环运行时）
+        self._schedule_clear_if_running()
 
     def __del__(self):
         """
@@ -43,6 +45,40 @@ class ExpiringLocalCache(AbstractCache):
         """
         if self._cron_task is not None:
             self._cron_task.cancel()
+        try:
+            _ALL_LOCAL_CACHES.discard(self)
+        except Exception:
+            pass
+
+    def close(self) -> None:
+        """
+        Synchronously request the background cron task to stop.
+        Prefer `await aclose()` when possible.
+        """
+        if self._cron_task is not None and not self._cron_task.done():
+            self._cron_task.cancel()
+
+    async def aclose(self) -> None:
+        """
+        Gracefully stop the background cron task (if any).
+        """
+        if self._cron_task is None:
+            return
+        try:
+            if self._cron_task.get_loop() is not asyncio.get_running_loop():
+                # Can't await tasks from another loop; best-effort cancel only.
+                self._cron_task.cancel()
+                return
+        except Exception:
+            pass
+        if not self._cron_task.done():
+            self._cron_task.cancel()
+        try:
+            await self._cron_task
+        except asyncio.CancelledError:
+            pass
+        except Exception:
+            pass
 
     def get(self, key: str) -> Optional[Any]:
         """
@@ -70,6 +106,8 @@ class ExpiringLocalCache(AbstractCache):
         :return:
         """
         self._cache_container[key] = (value, time.time() + expire_time)
+        if self._cron_task is None:
+            self._schedule_clear_if_running()
 
     def keys(self, pattern: str) -> List[str]:
         """
@@ -86,18 +124,17 @@ class ExpiringLocalCache(AbstractCache):
 
         return [key for key in self._cache_container.keys() if pattern in key]
 
-    def _schedule_clear(self):
+    def _schedule_clear_if_running(self):
         """
         开启定时清理任务,
         :return:
         """
-
         try:
-            loop = asyncio.get_event_loop()
+            loop = asyncio.get_running_loop()
         except RuntimeError:
-            loop = asyncio.new_event_loop()
-            asyncio.set_event_loop(loop)
-
+            # No running loop (e.g. created during module import). Skip scheduling to
+            # avoid pending tasks and "coroutine was never awaited" warnings.
+            return
         self._cron_task = loop.create_task(self._start_clear_cron())
 
     def _clear(self):
@@ -105,7 +142,7 @@ class ExpiringLocalCache(AbstractCache):
         根据过期时间清理缓存
         :return:
         """
-        for key, (value, expire_time) in self._cache_container.items():
+        for key, (value, expire_time) in list(self._cache_container.items()):
             if expire_time < time.time():
                 del self._cache_container[key]
 
@@ -117,6 +154,22 @@ class ExpiringLocalCache(AbstractCache):
         while True:
             self._clear()
             await asyncio.sleep(self._cron_interval)
+
+
+_ALL_LOCAL_CACHES: "weakref.WeakSet[ExpiringLocalCache]" = weakref.WeakSet()
+
+
+async def shutdown_all_local_caches() -> None:
+    """
+    Best-effort shutdown for all in-process ExpiringLocalCache instances.
+    This avoids 'Task was destroyed but it is pending!' during event-loop shutdown.
+    """
+    caches = list(_ALL_LOCAL_CACHES)
+    for cache in caches:
+        try:
+            await cache.aclose()
+        except Exception:
+            pass
 
 
 if __name__ == '__main__':

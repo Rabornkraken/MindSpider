@@ -4,10 +4,10 @@
 """
 
 # MySQL数据库配置
-DB_HOST = "your_host"
+DB_HOST = "127.0.0.1"
 DB_PORT = 3306
-DB_USER = "your_username"
-DB_PASSWORD = "your_password"
+DB_USER = "mindspider_user"
+DB_PASSWORD = "mindspider_user_pass"
 DB_NAME = "mindspider"
 DB_CHARSET = "utf8mb4"
 

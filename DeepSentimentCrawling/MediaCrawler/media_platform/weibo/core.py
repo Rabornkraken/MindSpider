@@ -148,7 +148,13 @@ class WeiboCrawler(AbstractCrawler):
                     page += 1
                     continue
                 utils.logger.info(f"[WeiboCrawler.search] search weibo keyword: {keyword}, page: {page}")
-                search_res = await self.wb_client.get_note_by_keyword(keyword=keyword, page=page, search_type=search_type)
+                try:
+                    search_res = await self.wb_client.get_note_by_keyword(keyword=keyword, page=page, search_type=search_type)
+                except DataFetchError as e:
+                    utils.logger.error(f"[WeiboCrawler.search] search keyword:{keyword} page:{page} error: {e}")
+                    page += 1
+                    continue
+                
                 note_id_list: List[str] = []
                 note_list = filter_search_result_card(search_res.get("cards"))
                 for note_item in note_list:

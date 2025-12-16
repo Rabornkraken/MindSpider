@@ -19,6 +19,7 @@ from var import source_keyword_var
 
 from .douyin_store_impl import *
 from .douyin_store_media import *
+from .douyin_store_sql import get_existing_aweme_ids
 
 
 class DouyinStoreFactory:
@@ -145,6 +146,35 @@ async def update_douyin_aweme(aweme_item: Dict):
     aweme_id = aweme_item.get("aweme_id")
     user_info = aweme_item.get("author", {})
     interact_info = aweme_item.get("statistics", {})
+    
+    # DEBUG: Log video object keys to find captions
+    video_item = aweme_item.get("video", {})
+    utils.logger.info(f"[DEBUG] Video keys for {aweme_id}: {list(video_item.keys())}")
+    
+    # DEBUG: Dump full JSON to file
+    try:
+        import json
+        import pathlib
+        import re
+        
+        # Sanitize title for filename
+        title = aweme_item.get("desc", "") or aweme_id
+        safe_title = re.sub(r'[\\/*?:"<>|]', "", title)
+        safe_title = safe_title.replace("\n", "").replace("\r", "").strip()
+        if len(safe_title) > 50:
+            safe_title = safe_title[:50]
+            
+        # Format: data/douyin/videos/{safe_title}_{aweme_id}/
+        folder_name = f"{safe_title}_{aweme_id}"
+        video_dir = f"data/douyin/videos/{folder_name}"
+        pathlib.Path(video_dir).mkdir(parents=True, exist_ok=True)
+        
+        with open(f"{video_dir}/{safe_title}.json", "w", encoding="utf-8") as f:
+            json.dump(aweme_item, f, ensure_ascii=False, indent=2)
+        utils.logger.info(f"[DEBUG] Saved metadata to {video_dir}/{safe_title}.json")
+    except Exception as e:
+        utils.logger.error(f"[DEBUG] Failed to save JSON: {e}")
+    
     save_content_item = {
         "aweme_id": aweme_id,
         "aweme_type": str(aweme_item.get("aweme_type")),
@@ -251,16 +281,17 @@ async def update_dy_aweme_image(aweme_id, pic_content, extension_file_name):
     await DouYinImage().store_image({"aweme_id": aweme_id, "pic_content": pic_content, "extension_file_name": extension_file_name})
 
 
-async def update_dy_aweme_video(aweme_id, video_content, extension_file_name):
+async def update_dy_aweme_video(aweme_id, video_content, extension_file_name, title=""):
     """
     更新抖音短视频
     Args:
         aweme_id:
         video_content:
         extension_file_name:
+        title:
 
     Returns:
 
     """
 
-    await DouYinVideo().store_video({"aweme_id": aweme_id, "video_content": video_content, "extension_file_name": extension_file_name})
+    await DouYinVideo().store_video({"aweme_id": aweme_id, "video_content": video_content, "extension_file_name": extension_file_name, "title": title})

@@ -65,8 +65,8 @@ class AbstractLogin(ABC):
     async def login_by_qrcode(self):
         pass
 
-    @abstractmethod
     async def login_by_mobile(self):
+        """Optional implementation for mobile login"""
         pass
 
     @abstractmethod

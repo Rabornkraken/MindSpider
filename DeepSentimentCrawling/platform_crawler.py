@@ -13,6 +13,7 @@ from datetime import datetime
 from pathlib import Path
 from typing import List, Dict, Optional
 import json
+import re
 
 # 添加项目根目录到路径
 project_root = Path(__file__).parent.parent
@@ -29,7 +30,7 @@ class PlatformCrawler:
     def __init__(self):
         """初始化平台爬虫管理器"""
         self.mediacrawler_path = Path(__file__).parent / "MediaCrawler"
-        self.supported_platforms = ['xhs', 'dy', 'ks', 'bili', 'wb', 'tieba', 'zhihu']
+        self.supported_platforms = ['xhs', 'dy', 'ks', 'bili', 'wb', 'tieba', 'zhihu', 'xueqiu', 'youtube']
         self.crawl_stats = {}
         
         # 确保MediaCrawler目录存在
@@ -137,8 +138,7 @@ SQLITE_DB_PATH = os.path.join(os.path.dirname(os.path.dirname(__file__)), "schem
                     new_lines.append('ENABLE_GET_COMMENTS = True')
                 elif line.startswith('CRAWLER_MAX_COMMENTS_COUNT_SINGLENOTES = '):
                     new_lines.append('CRAWLER_MAX_COMMENTS_COUNT_SINGLENOTES = 20')
-                elif line.startswith('HEADLESS = '):
-                    new_lines.append('HEADLESS = True')  # 使用无头模式
+                # HEADLESS config is now controlled by base_config.py, not overwritten here
                 else:
                     new_lines.append(line)
             
@@ -183,9 +183,12 @@ SQLITE_DB_PATH = os.path.join(os.path.dirname(os.path.dirname(__file__)), "schem
             if not self.configure_mediacrawler_db():
                 return {"success": False, "error": "数据库配置失败"}
             
-            # 创建基础配置
-            if not self.create_base_config(platform, keywords, "search", max_notes):
-                return {"success": False, "error": "基础配置创建失败"}
+            # 不再修改base_config.py，遵循用户意愿
+            # if not self.create_base_config(platform, keywords, "search", max_notes):
+            #     return {"success": False, "error": "基础配置创建失败"}
+            
+            # 将关键词列表转换为逗号分隔的字符串
+            keywords_str = ",".join(keywords)
             
             # 构建命令
             cmd = [
@@ -193,20 +196,64 @@ SQLITE_DB_PATH = os.path.join(os.path.dirname(os.path.dirname(__file__)), "schem
                 "--platform", platform,
                 "--lt", login_type,
                 "--type", "search",
-                "--save_data_option", "db"
+                "--save_data_option", "db",
+                "--keywords", keywords_str
             ]
             
             print(f"执行命令: {' '.join(cmd)}")
             
             # 切换到MediaCrawler目录并执行
-            result = subprocess.run(
+            # 修改：使用Popen实时流式输出，同时捕获用于解析
+            process = subprocess.Popen(
                 cmd,
                 cwd=self.mediacrawler_path,
-                timeout=1800  # 30分钟超时
+                stdout=subprocess.PIPE,
+                stderr=subprocess.PIPE,
+                text=True,
+                bufsize=1  # 行缓冲
             )
+            
+            captured_stdout = []
+            captured_stderr = []
+            
+            # 实时读取输出
+            import select
+            
+            while True:
+                reads = [process.stdout.fileno(), process.stderr.fileno()]
+                ret = select.select(reads, [], [])
+                
+                for fd in ret[0]:
+                    if fd == process.stdout.fileno():
+                        line = process.stdout.readline()
+                        if line:
+                            print(line, end='')
+                            captured_stdout.append(line)
+                    if fd == process.stderr.fileno():
+                        line = process.stderr.readline()
+                        if line:
+                            print(line, end='', file=sys.stderr)
+                            captured_stderr.append(line)
+                
+                if process.poll() is not None:
+                    # 读取剩余内容
+                    for line in process.stdout:
+                        print(line, end='')
+                        captured_stdout.append(line)
+                    for line in process.stderr:
+                        print(line, end='', file=sys.stderr)
+                        captured_stderr.append(line)
+                    break
+            
+            returncode = process.returncode
+            result_stdout = "".join(captured_stdout)
+            result_stderr = "".join(captured_stderr)
             
             end_time = datetime.now()
             duration = (end_time - start_time).total_seconds()
+            
+            # 解析输出提取统计信息
+            parsed_stats = self._parse_crawl_output(captured_stdout)
             
             # 创建统计信息
             crawl_stats = {
@@ -215,20 +262,20 @@ SQLITE_DB_PATH = os.path.join(os.path.dirname(os.path.dirname(__file__)), "schem
                 "duration_seconds": duration,
                 "start_time": start_time.isoformat(),
                 "end_time": end_time.isoformat(),
-                "return_code": result.returncode,
-                "success": result.returncode == 0,
-                "notes_count": 0,
-                "comments_count": 0,
-                "errors_count": 0
+                "return_code": returncode,
+                "success": returncode == 0,
+                "notes_count": parsed_stats.get("notes_count", 0),
+                "comments_count": parsed_stats.get("comments_count", 0),
+                "errors_count": parsed_stats.get("errors_count", 0)
             }
             
             # 保存统计信息
             self.crawl_stats[platform] = crawl_stats
             
-            if result.returncode == 0:
+            if returncode == 0:
                 print(f"✅ {platform} 爬取完成，耗时: {duration:.1f}秒")
             else:
-                print(f"❌ {platform} 爬取失败，返回码: {result.returncode}")
+                print(f"❌ {platform} 爬取失败，返回码: {returncode}")
             
             return crawl_stats
             
@@ -239,39 +286,29 @@ SQLITE_DB_PATH = os.path.join(os.path.dirname(os.path.dirname(__file__)), "schem
             print(f"❌ {platform} 爬取异常: {e}")
             return {"success": False, "error": str(e), "platform": platform}
     
-    def _parse_crawl_output(self, output_lines: List[str], error_lines: List[str]) -> Dict:
+    def _parse_crawl_output(self, output_lines: List[str]) -> Dict:
         """解析爬取输出，提取统计信息"""
         stats = {
             "notes_count": 0,
             "comments_count": 0,
-            "errors_count": 0,
-            "login_required": False
+            "errors_count": 0
         }
         
-        # 解析输出行
         for line in output_lines:
-            if "条笔记" in line or "条内容" in line:
+            # 查找标准化的总结行: [Summary] Notes: 10, Comments: 5
+            if "[Summary]" in line:
                 try:
-                    # 提取数字
-                    import re
-                    numbers = re.findall(r'\d+', line)
-                    if numbers:
-                        stats["notes_count"] = int(numbers[0])
-                except:
-                    pass
-            elif "条评论" in line:
-                try:
-                    import re
-                    numbers = re.findall(r'\d+', line)
-                    if numbers:
-                        stats["comments_count"] = int(numbers[0])
-                except:
-                    pass
-            elif "登录" in line or "扫码" in line:
-                stats["login_required"] = True
-        
-        # 解析错误行
-        for line in error_lines:
+                    notes_match = re.search(r'Notes:\s*(\d+)', line)
+                    comments_match = re.search(r'Comments:\s*(\d+)', line)
+                    
+                    if notes_match:
+                        stats["notes_count"] = int(notes_match.group(1))
+                    if comments_match:
+                        stats["comments_count"] = int(comments_match.group(1))
+                except Exception as e:
+                    print(f"解析总结行失败: {e}")
+            
+            # 也可以保留之前的解析逻辑作为fallback，或者用于计算错误
             if "error" in line.lower() or "异常" in line:
                 stats["errors_count"] += 1
         

@@ -35,7 +35,7 @@ class WeiboClient:
 
     def __init__(
         self,
-        timeout=60,  # 若开启爬取媒体选项，weibo 的图片需要更久的超时时间
+        timeout=120,  # 若开启爬取媒体选项，weibo 的图片需要更久的超时时间
         proxy=None,
         *,
         headers: Dict[str, str],
@@ -52,13 +52,18 @@ class WeiboClient:
 
     async def request(self, method, url, **kwargs) -> Union[Response, Dict]:
         enable_return_response = kwargs.pop("return_response", False)
-        async with httpx.AsyncClient(proxy=self.proxy) as client:
+        async with httpx.AsyncClient(proxy=self.proxy, verify=False) as client:
             response = await client.request(method, url, timeout=self.timeout, **kwargs)
 
         if enable_return_response:
             return response
 
-        data: Dict = response.json()
+        try:
+            data: Dict = response.json()
+        except json.JSONDecodeError:
+            utils.logger.error(f"[WeiboClient.request] json decode error, url:{url}, res:{response.text}")
+            raise DataFetchError(f"json decode error, res:{response.text}")
+
         ok_code = data.get("ok")
         if ok_code == 0:  # response error
             utils.logger.error(f"[WeiboClient.request] request {method}:{url} err, res:{data}")

@@ -312,15 +312,47 @@ class DouYinClient(AbstractApiClient):
         return result
 
     async def get_aweme_media(self, url: str) -> Union[bytes, None]:
-        async with httpx.AsyncClient(proxy=self.proxy) as client:
-            try:
-                response = await client.request("GET", url, timeout=self.timeout, follow_redirects=True)
-                response.raise_for_status()
-                if not response.reason_phrase == "OK":
-                    utils.logger.error(f"[DouYinClient.get_aweme_media] request {url} err, res:{response.text}")
-                    return None
-                else:
-                    return response.content
-            except httpx.HTTPError as exc:  # some wrong when call httpx.request method, such as connection error, client error, server error or response status code is not 2xx
-                utils.logger.error(f"[DouYinClient.get_aweme_media] {exc.__class__.__name__} for {exc.request.url} - {exc}")  # 保留原始异常类型名称，以便开发者调试
+        return await self._request_media_via_evaluate(url)
+
+    async def _request_media_via_evaluate(self, url: str) -> Optional[bytes]:
+        """
+        Fetch media (video/image) using the browser context to bypass WAF/Login checks.
+        Returns bytes or None.
+        """
+        import base64
+        utils.logger.info(f"[DouYinClient] Fetching media via browser: {url}")
+        try:
+            result = await self.playwright_page.evaluate(
+                """
+                async (url) => {
+                    try {
+                        const response = await fetch(url);
+                        if (response.status !== 200) {
+                            return { status: response.status, error: "Status not 200" };
+                        }
+                        const blob = await response.blob();
+                        return new Promise((resolve, reject) => {
+                            const reader = new FileReader();
+                            reader.onloadend = () => resolve({ status: 200, data: reader.result });
+                            reader.onerror = reject;
+                            reader.readAsDataURL(blob);
+                        });
+                    } catch (e) {
+                        return { status: 0, error: e.toString() };
+                    }
+                }
+                """,
+                url
+            )
+            
+            if result['status'] == 200:
+                # result['data'] is "data:video/mp4;base64,AAAA..."
+                base64_str = result['data'].split(",")[1]
+                return base64.b64decode(base64_str)
+            else:
+                utils.logger.error(f"[DouYinClient] Browser fetch failed: {result.get('error')}")
                 return None
+                
+        except Exception as e:
+            utils.logger.error(f"[DouYinClient] _request_media_via_evaluate exception: {e}")
+            return None

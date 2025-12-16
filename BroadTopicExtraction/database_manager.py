@@ -98,8 +98,8 @@ class DatabaseManager:
                     insert_query = """
                         INSERT INTO daily_news (
                             news_id, source_platform, title, url, crawl_date, 
-                            rank_position, add_ts
-                        ) VALUES (%s, %s, %s, %s, %s, %s, %s)
+                            rank_position, add_ts, last_modify_ts
+                        ) VALUES (%s, %s, %s, %s, %s, %s, %s, %s)
                     """
                     cursor.execute(insert_query, (
                         news_id,
@@ -108,6 +108,7 @@ class DatabaseManager:
                         news_item.get('url', ''),
                         crawl_date,
                         news_item.get('rank', None),
+                        current_timestamp,
                         current_timestamp
                     ))
                     saved_count += 1
@@ -174,12 +175,14 @@ class DatabaseManager:
             existing = cursor.fetchone()
             
             keywords_json = json.dumps(keywords, ensure_ascii=False)
+            topic_id = f"daily_summary_{extract_date}"
+            topic_name = f"Daily Summary {extract_date}"
             
             if existing:
                 # 更新现有记录
                 update_query = """
                     UPDATE daily_topics 
-                    SET keywords = %s, summary = %s, add_ts = %s
+                    SET keywords = %s, topic_description = %s, last_modify_ts = %s
                     WHERE extract_date = %s
                 """
                 cursor.execute(update_query, (keywords_json, summary, current_timestamp, extract_date))
@@ -187,10 +190,16 @@ class DatabaseManager:
             else:
                 # 插入新记录
                 insert_query = """
-                    INSERT INTO daily_topics (extract_date, keywords, summary, add_ts)
-                    VALUES (%s, %s, %s, %s)
+                    INSERT INTO daily_topics (
+                        topic_id, topic_name, extract_date, keywords, 
+                        topic_description, add_ts, last_modify_ts
+                    )
+                    VALUES (%s, %s, %s, %s, %s, %s, %s)
                 """
-                cursor.execute(insert_query, (extract_date, keywords_json, summary, current_timestamp))
+                cursor.execute(insert_query, (
+                    topic_id, topic_name, extract_date, keywords_json, 
+                    summary, current_timestamp, current_timestamp
+                ))
                 print(f"保存了 {extract_date} 的话题分析")
             
             return True

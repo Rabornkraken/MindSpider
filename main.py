@@ -186,7 +186,6 @@ class MindSpider:
         try:
             cmd = [
                 sys.executable, "main.py",
-                "--date", extract_date.strftime("%Y-%m-%d"),
                 "--keywords", str(keywords_count)
             ]
             
@@ -358,7 +357,7 @@ def main():
     # 参数配置
     parser.add_argument("--date", type=str, help="目标日期 (YYYY-MM-DD)，默认为今天")
     parser.add_argument("--platforms", type=str, nargs='+', 
-                       choices=['xhs', 'dy', 'ks', 'bili', 'wb', 'tieba', 'zhihu'],
+                       choices=['xhs', 'dy', 'ks', 'bili', 'wb', 'tieba', 'zhihu', 'xueqiu', 'youtube'],
                        help="指定爬取平台")
     parser.add_argument("--keywords-count", type=int, default=100, help="话题提取的关键词数量")
     parser.add_argument("--max-keywords", type=int, default=50, help="每个平台最大关键词数量")

@@ -158,3 +158,23 @@ async def update_creator_by_user_id(user_id: str, creator_item: Dict) -> int:
     async_db_conn: Union[AsyncMysqlDB, AsyncSqliteDB] = media_crawler_db_var.get()
     effect_row: int = await async_db_conn.update_table("dy_creator", creator_item, "user_id", user_id)
     return effect_row
+
+async def get_existing_aweme_ids(aweme_ids: List[str]) -> List[str]:
+    """
+    Check which aweme_ids already exist in the database
+    """
+    if not aweme_ids:
+        return []
+    
+    async_db_conn = media_crawler_db_var.get()
+    
+    # Handle parameter placeholder
+    placeholder = "%s" if isinstance(async_db_conn, AsyncMysqlDB) else "?"
+    placeholders = ",".join([placeholder] * len(aweme_ids))
+    
+    sql = f"SELECT aweme_id FROM douyin_aweme WHERE aweme_id IN ({placeholders})"
+    
+    # Pass aweme_ids as positional arguments to query
+    rows = await async_db_conn.query(sql, *aweme_ids)
+    
+    return [row['aweme_id'] for row in rows]

@@ -84,12 +84,18 @@ class WeiboLogin(AbstractLogin):
             selector=qrcode_img_selector
         )
         if not base64_qrcode_img:
-            utils.logger.info("[WeiboLogin.login_by_qrcode] login failed , have not found qrcode please check ....")
-            sys.exit()
-
-        # show login qrcode
-        partial_show_qrcode = functools.partial(utils.show_qrcode, base64_qrcode_img)
-        asyncio.get_running_loop().run_in_executor(executor=None, func=partial_show_qrcode)
+            utils.logger.info("[WeiboLogin.login_by_qrcode] login failed , have not found qrcode. Please login manually in the browser...")
+            # Take a screenshot to debug
+            await self.context_page.screenshot(path="weibo_login_debug.png")
+            utils.logger.info("Screenshot saved to weibo_login_debug.png")
+            
+            # sys.exit() 
+            # Do not exit, wait for user to manual login
+            await asyncio.sleep(1)
+        else:
+            # show login qrcode
+            partial_show_qrcode = functools.partial(utils.show_qrcode, base64_qrcode_img)
+            asyncio.get_running_loop().run_in_executor(executor=None, func=partial_show_qrcode)
 
         utils.logger.info(f"[WeiboLogin.login_by_qrcode] Waiting for scan code login, remaining time is 20s")
 
@@ -102,7 +108,8 @@ class WeiboLogin(AbstractLogin):
             await self.check_login_state(no_logged_in_session)
         except RetryError:
             utils.logger.info("[WeiboLogin.login_by_qrcode] Login weibo failed by qrcode login method ...")
-            sys.exit()
+            # sys.exit()
+            utils.logger.info("Please manual login in the browser window...")
 
         wait_redirect_seconds = 5
         utils.logger.info(

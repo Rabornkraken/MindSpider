@@ -18,8 +18,10 @@ DY_SPECIFIED_ID_LIST = [
     # ........................
 ]
 
-# 指定DY用户ID列表
+# 指定抖音用户ID列表
 DY_CREATOR_ID_LIST = [
-    "MS4wLjABAAAATJPY7LAlaa5X-c8uNdWkvz0jUGgpw4eeXIwu_8BhvqE",
-    # ........................
+    "https://v.douyin.com/h_jxidKie7g/",
+    "https://v.douyin.com/mp5dWB323NE/",
+    "https://v.douyin.com/KxYHRjyomlQ/",
+    "https://v.douyin.com/XGaoij3YulE/",
 ]

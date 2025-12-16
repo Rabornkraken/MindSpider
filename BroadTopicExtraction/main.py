@@ -313,6 +313,11 @@ def main():
     if args.keywords < 1 or args.keywords > 200:
         print("关键词数量应在1-200之间")
         sys.exit(1)
+        
+    # 如果未指定源，默认只使用财经相关源
+    if not args.sources:
+        args.sources = ["xueqiu", "wallstreetcn", "cls-hot"]
+        print("未指定新闻源，默认使用财经源: 雪球, 华尔街见闻, 财联社")
     
     # 运行提取
     try:

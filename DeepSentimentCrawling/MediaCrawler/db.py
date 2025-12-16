@@ -27,6 +27,74 @@ from tools import utils
 from var import db_conn_pool_var, media_crawler_db_var
 
 
+async def _ensure_mysql_column(table_name: str, column_name: str, ddl: str) -> None:
+    """
+    Ensure a MySQL column exists; if missing, run the provided ALTER DDL.
+    This is a non-destructive, best-effort migration for existing databases.
+    """
+    async_db_obj: AsyncMysqlDB = media_crawler_db_var.get()
+    table_exists = await async_db_obj.get_first(
+        """
+        SELECT 1
+        FROM information_schema.tables
+        WHERE table_schema = %s AND table_name = %s
+        LIMIT 1
+        """,
+        config.MYSQL_DB_NAME,
+        table_name,
+    )
+    if not table_exists:
+        return
+    # Check table/column existence via information_schema
+    exists = await async_db_obj.get_first(
+        """
+        SELECT 1
+        FROM information_schema.columns
+        WHERE table_schema = %s AND table_name = %s AND column_name = %s
+        LIMIT 1
+        """,
+        config.MYSQL_DB_NAME,
+        table_name,
+        column_name,
+    )
+    if exists:
+        return
+    try:
+        await async_db_obj.execute(ddl)
+        utils.logger.info(f"[init_db] applied mysql migration: {table_name}.{column_name}")
+    except Exception as e:
+        # Duplicate column / race conditions are safe to ignore; other errors should be visible.
+        utils.logger.warning(f"[init_db] mysql migration failed for {table_name}.{column_name}: {e}")
+
+
+async def ensure_mysql_schema_migrations() -> None:
+    """
+    Apply small, backward-compatible migrations for existing MySQL databases.
+    """
+    if config.SAVE_DATA_OPTION == "sqlite":
+        return
+
+    # douyin_aweme_comment: keep in sync with store.douyin.update_dy_aweme_comment
+    await _ensure_mysql_column(
+        "douyin_aweme_comment",
+        "parent_comment_id",
+        "ALTER TABLE douyin_aweme_comment "
+        "ADD COLUMN `parent_comment_id` VARCHAR(64) NOT NULL DEFAULT '0' COMMENT '父评论ID';",
+    )
+    await _ensure_mysql_column(
+        "douyin_aweme_comment",
+        "like_count",
+        "ALTER TABLE douyin_aweme_comment "
+        "ADD COLUMN `like_count` VARCHAR(255) NOT NULL DEFAULT '0' COMMENT '点赞数';",
+    )
+    await _ensure_mysql_column(
+        "douyin_aweme_comment",
+        "pictures",
+        "ALTER TABLE douyin_aweme_comment "
+        "ADD COLUMN `pictures` VARCHAR(500) NOT NULL DEFAULT '' COMMENT '评论图片列表';",
+    )
+
+
 async def init_mediacrawler_db():
     """
     初始化数据库链接池对象，并将该对象塞给media_crawler_db_var上下文变量
@@ -72,6 +140,7 @@ async def init_db():
         utils.logger.info("[init_db] end init sqlite db connect object")
     else:
         await init_mediacrawler_db()
+        await ensure_mysql_schema_migrations()
         utils.logger.info("[init_db] end init mysql db connect object")
 
 
@@ -90,6 +159,10 @@ async def close():
         db_pool: aiomysql.Pool = db_conn_pool_var.get()
         if db_pool is not None:
             db_pool.close()
+            try:
+                await db_pool.wait_closed()
+            except Exception:
+                pass
             utils.logger.info("[close] mysql db pool closed")
 
 
@@ -138,7 +211,14 @@ async def init_table_schema(db_type: str = None):
         async_db_obj: AsyncMysqlDB = media_crawler_db_var.get()
         async with aiofiles.open("schema/tables.sql", mode="r", encoding="utf-8") as f:
             schema_sql = await f.read()
-            await async_db_obj.execute(schema_sql)
+            # MySQL drivers usually don't allow multi-statements in a single execute by default.
+            # Execute statements one by one (best-effort).
+            for stmt in (s.strip() for s in schema_sql.split(";")):
+                if not stmt:
+                    continue
+                if stmt.startswith("--"):
+                    continue
+                await async_db_obj.execute(stmt)
             utils.logger.info("[init_table_schema] mysql table schema init successful")
             await close()
     else:

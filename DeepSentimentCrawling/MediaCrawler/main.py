@@ -17,6 +17,7 @@ import cmd_arg
 import config
 import db
 from base.base_crawler import AbstractCrawler
+from cache.local_cache import shutdown_all_local_caches
 from media_platform.bilibili import BilibiliCrawler
 from media_platform.douyin import DouYinCrawler
 from media_platform.kuaishou import KuaishouCrawler
@@ -24,6 +25,8 @@ from media_platform.tieba import TieBaCrawler
 from media_platform.weibo import WeiboCrawler
 from media_platform.xhs import XiaoHongShuCrawler
 from media_platform.zhihu import ZhihuCrawler
+from media_platform.xueqiu import XueqiuCrawler
+from media_platform.youtube import YouTubeCrawler
 
 
 class CrawlerFactory:
@@ -35,6 +38,8 @@ class CrawlerFactory:
         "wb": WeiboCrawler,
         "tieba": TieBaCrawler,
         "zhihu": ZhihuCrawler,
+        "xueqiu": XueqiuCrawler,
+        "youtube": YouTubeCrawler,
     }
 
     @staticmethod
@@ -65,16 +70,28 @@ async def main():
     await crawler.start()
 
 
-def cleanup():
-    if crawler:
-        # asyncio.run(crawler.close())
-        pass
+async def async_cleanup() -> None:
+    if crawler and hasattr(crawler, "close"):
+        try:
+            await crawler.close()
+        except Exception:
+            pass
     if config.SAVE_DATA_OPTION in ["db", "sqlite"]:
-        asyncio.run(db.close())
+        try:
+            await db.close()
+        except Exception:
+            pass
+    try:
+        await shutdown_all_local_caches()
+    except Exception:
+        pass
 
 
 if __name__ == "__main__":
-    try:
-        asyncio.get_event_loop().run_until_complete(main())
-    finally:
-        cleanup()
+    async def _entry():
+        try:
+            await main()
+        finally:
+            await async_cleanup()
+
+    asyncio.run(_entry())
