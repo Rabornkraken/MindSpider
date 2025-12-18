@@ -589,6 +589,31 @@ CREATE TABLE `zhihu_creator` (
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci COMMENT='知乎创作者';
 
 
+DROP TABLE IF EXISTS `youtube_video`;
+CREATE TABLE `youtube_video` (
+    `id` int NOT NULL AUTO_INCREMENT COMMENT '自增ID',
+    `video_id` varchar(32) NOT NULL COMMENT '视频ID',
+    `title` varchar(512) DEFAULT NULL COMMENT '标题',
+    `description` longtext DEFAULT NULL COMMENT '描述',
+    `channel` varchar(255) DEFAULT NULL COMMENT '频道名称',
+    `channel_id` varchar(128) DEFAULT NULL COMMENT '频道ID',
+    `publish_time` varchar(32) DEFAULT NULL COMMENT '发布时间(如 upload_date)',
+    `duration` int NOT NULL DEFAULT '0' COMMENT '时长(秒)',
+    `view_count` bigint NOT NULL DEFAULT '0' COMMENT '播放量',
+    `like_count` bigint NOT NULL DEFAULT '0' COMMENT '点赞数',
+    `comment_count` bigint NOT NULL DEFAULT '0' COMMENT '评论数',
+    `url` varchar(512) DEFAULT NULL COMMENT '视频URL',
+    `thumbnail` varchar(512) DEFAULT NULL COMMENT '缩略图URL',
+    `transcription` longtext DEFAULT NULL COMMENT '字幕/转写文本',
+    `source_keyword` varchar(255) DEFAULT NULL COMMENT '来源关键词',
+    `add_ts` bigint NOT NULL COMMENT '记录添加时间戳',
+    `last_modify_ts` bigint NOT NULL COMMENT '记录最后修改时间戳',
+    PRIMARY KEY (`id`),
+    UNIQUE KEY `idx_youtube_video_video_id` (`video_id`),
+    KEY `idx_youtube_video_publish_time` (`publish_time`)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci COMMENT='YouTube视频';
+
+
 -- add column `like_count` to douyin_aweme_comment
 alter table douyin_aweme_comment add column `like_count` varchar(255) NOT NULL DEFAULT '0' COMMENT '点赞数';
 

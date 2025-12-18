@@ -1,56 +1,83 @@
+# 声明：本代码仅供学习和研究目的使用。使用者应遵守以下原则：
+# 1. 不得用于任何商业用途。
+# 2. 使用时应遵守目标平台的使用条款和robots.txt规则。
+# 3. 不得进行大规模爬取或对平台造成运营干扰。
+# 4. 应合理控制请求频率，避免给目标平台带来不必要的负担。
+# 5. 不得用于任何非法或不当的用途。
+#
+# 详细许可条款请参阅项目根目录下的LICENSE文件。
+# 使用本代码即表示您同意遵守上述原则和LICENSE中的所有条款。
+
 import asyncio
+import csv
+import os
+import pathlib
 from typing import Dict
 
-import config
 from base.base_crawler import AbstractStore
-from db import db_conn_pool_var
 from tools import utils
 
-class YouTubeStore(AbstractStore):
+
+def _calculate_number_of_files(file_store_path: str) -> int:
+    if not os.path.exists(file_store_path):
+        return 1
+    try:
+        return max([int(file_name.split("_")[0]) for file_name in os.listdir(file_store_path)]) + 1
+    except ValueError:
+        return 1
+
+
+class YouTubeCsvStoreImplement(AbstractStore):
+    csv_store_path: str = "data/youtube"
+    file_count: int = _calculate_number_of_files(csv_store_path)
+
+    def make_save_file_name(self, store_type: str) -> str:
+        return f"{self.csv_store_path}/{self.file_count}_youtube_{store_type}_{utils.get_current_date()}.csv"
+
+    def _save_data_to_csv_sync(self, save_item: Dict, store_type: str) -> None:
+        pathlib.Path(self.csv_store_path).mkdir(parents=True, exist_ok=True)
+        save_file_name = self.make_save_file_name(store_type=store_type)
+        with open(save_file_name, mode="a+", encoding="utf-8-sig", newline="") as f:
+            writer = csv.writer(f)
+            if f.tell() == 0:
+                writer.writerow(save_item.keys())
+            writer.writerow(save_item.values())
+
+    async def _save_data_to_csv(self, save_item: Dict, store_type: str) -> None:
+        await asyncio.to_thread(self._save_data_to_csv_sync, save_item, store_type)
+
     async def store_content(self, content_item: Dict):
-        """
-        Store youtube video content
-        """
-        pool = db_conn_pool_var.get()
-        async with pool.acquire() as conn:
-            async with conn.cursor() as cursor:
-                insert_sql = """
-                    INSERT INTO youtube_video(
-                        video_id, title, `desc`, channel_id, channel_name, 
-                        view_count, publish_time, duration, url, transcription, 
-                        create_time, last_modify_ts
-                    ) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
-                    ON DUPLICATE KEY UPDATE 
-                        view_count=VALUES(view_count), 
-                        transcription=VALUES(transcription),
-                        last_modify_ts=VALUES(last_modify_ts)
-                """
-                
-                params = (
-                    content_item.get("video_id"),
-                    content_item.get("title"),
-                    content_item.get("desc"),
-                    content_item.get("channel_id"),
-                    content_item.get("channel_name"),
-                    content_item.get("view_count"),
-                    content_item.get("publish_time"),
-                    content_item.get("duration"),
-                    content_item.get("url"),
-                    content_item.get("transcription"),
-                    content_item.get("create_time"),
-                    content_item.get("last_modify_ts")
-                )
-                
-                await cursor.execute(insert_sql, params)
-                await conn.commit()
-                utils.logger.info(f"[YouTubeStore] Insert video: {content_item.get('video_id')}")
+        await self._save_data_to_csv(save_item=content_item, store_type="videos")
 
     async def store_comment(self, comment_item: Dict):
-        pass # Not implementing comments for now
+        await self._save_data_to_csv(save_item=comment_item, store_type="comments")
 
     async def store_creator(self, creator: Dict):
-        pass
+        await self._save_data_to_csv(save_item=creator, store_type="creator")
 
-async def update_youtube_video(video_item: Dict):
-    store = YouTubeStore()
-    await store.store_content(video_item)
+
+class YouTubeDbStoreImplement(AbstractStore):
+    async def store_content(self, content_item: Dict):
+        from .youtube_store_sql import add_new_video, query_video_by_video_id, update_video_by_video_id
+
+        video_id = content_item.get("video_id")
+        if not video_id:
+            return
+        video_detail = await query_video_by_video_id(video_id)
+        if not video_detail:
+            content_item["add_ts"] = utils.get_current_timestamp()
+            await add_new_video(content_item)
+        else:
+            await update_video_by_video_id(video_id, content_item)
+
+    async def store_comment(self, comment_item: Dict):
+        # TODO: implement if needed
+        return
+
+    async def store_creator(self, creator: Dict):
+        # TODO: implement if needed
+        return
+
+
+class YouTubeSqliteStoreImplement(YouTubeDbStoreImplement):
+    pass

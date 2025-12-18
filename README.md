@@ -196,6 +196,7 @@ flowchart TB
    - weibo_note - 微博帖子
    - tieba_note - 贴吧帖子
    - zhihu_content - 知乎内容
+   - youtube_video - YouTube视频（字幕/转写）
 
 ## 安装部署
 
@@ -321,6 +322,10 @@ python main.py --deep-sentiment --platforms tieba --test
 
 # 知乎
 python main.py --deep-sentiment --platforms zhihu --test
+
+# YouTube（无需登录；优先抓取字幕/自动字幕）
+python main.py --deep-sentiment --platforms yt --test
+# 代理：编辑 DeepSentimentCrawling/MediaCrawler/config/youtube_config.py 的 YOUTUBE_PROXY，或设置环境变量 HTTP_PROXY/HTTPS_PROXY
 ```
 
 ### 登录问题排除

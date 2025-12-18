@@ -567,3 +567,30 @@ CREATE TABLE zhihu_creator (
 );
 
 CREATE UNIQUE INDEX idx_zhihu_creator_user_id ON zhihu_creator(user_id);
+
+-- ----------------------------
+-- Table structure for youtube_video
+-- ----------------------------
+DROP TABLE IF EXISTS youtube_video;
+CREATE TABLE youtube_video (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    video_id TEXT NOT NULL UNIQUE,
+    title TEXT DEFAULT NULL,
+    description TEXT DEFAULT NULL,
+    channel TEXT DEFAULT NULL,
+    channel_id TEXT DEFAULT NULL,
+    publish_time TEXT DEFAULT NULL,
+    duration INTEGER NOT NULL DEFAULT 0,
+    view_count INTEGER NOT NULL DEFAULT 0,
+    like_count INTEGER NOT NULL DEFAULT 0,
+    comment_count INTEGER NOT NULL DEFAULT 0,
+    url TEXT DEFAULT NULL,
+    thumbnail TEXT DEFAULT NULL,
+    transcription TEXT DEFAULT NULL,
+    source_keyword TEXT DEFAULT NULL,
+    add_ts INTEGER NOT NULL,
+    last_modify_ts INTEGER NOT NULL
+);
+
+CREATE UNIQUE INDEX idx_youtube_video_video_id ON youtube_video(video_id);
+CREATE INDEX idx_youtube_video_publish_time ON youtube_video(publish_time);

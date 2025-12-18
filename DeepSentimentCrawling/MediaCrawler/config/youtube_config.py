@@ -1,10 +1,49 @@
-# YouTube platform configuration
+# 声明：本代码仅供学习和研究目的使用。使用者应遵守以下原则：
+# 1. 不得用于任何商业用途。
+# 2. 使用时应遵守目标平台的使用条款和robots.txt规则。
+# 3. 不得进行大规模爬取或对平台造成运营干扰。
+# 4. 应合理控制请求频率，避免给目标平台带来不必要的负担。
+# 5. 不得用于任何非法或不当的用途。
+#
+# 详细许可条款请参阅项目根目录下的LICENSE文件。
+# 使用本代码即表示您同意遵守上述原则和LICENSE中的所有条款。
 
-# Search types
-YOUTUBE_SEARCH_TYPE = "video"  # video, channel
+# YouTube crawler config
 
-# Specified video IDs (optional)
-YOUTUBE_SPECIFIED_ID_LIST = []
+# detail 模式下指定视频ID列表（video_id, 如: dQw4w9WgXcQ）
+YT_SPECIFIED_ID_LIST = []
 
-# Specified channel IDs (optional)
-YOUTUBE_CREATOR_ID_LIST = []
+# 优先尝试的字幕语言（逗号分隔）；会优先选择“人工字幕”，否则选择“自动字幕”
+YOUTUBE_TRANSCRIPT_LANGS = "zh-Hans,zh-Hant,zh,en"
+
+# 是否尝试抓取 YouTube 字幕（caption/auto caption）
+YOUTUBE_ENABLE_TRANSCRIPT = True
+
+# 当字幕获取失败时，是否回退到“下载音频 + 本地ASR转写”
+# 需要安装 yt-dlp，且本地ASR需要 funasr 等依赖（见 tools/transcriber.py 日志提示）
+YOUTUBE_ENABLE_AUDIO_FALLBACK = True
+
+# 音频回退下载格式（yt-dlp format selector）
+# 说明：
+# - YouTube 不提供“mp3流”；mp3 只能在本地用 ffmpeg 转码得到（不节省代理流量）。
+# - 想进一步降低代理流量，通常优先选择 opus(webm) 比 m4a 更小：
+#   "bestaudio[acodec^=opus]/bestaudio[ext=m4a]/bestaudio"
+YOUTUBE_AUDIO_FORMAT = "bestaudio[ext=m4a]/bestaudio"
+
+# 可选：下载后用 ffmpeg 转码为指定音频格式（例如 "mp3" / "wav" / "m4a"）
+# - 仅影响本地文件大小与兼容性；不会减少代理下载流量。
+# - 需要系统已安装 ffmpeg（yt-dlp 会调用它）。
+YOUTUBE_AUDIO_POSTPROCESS_CODEC = ""
+
+# 可选：yt-dlp remote components（用于解决 YouTube 的 JS challenge / EJS）
+# 设为空表示不启用；推荐值：["ejs:github"]
+YOUTUBE_REMOTE_COMPONENTS = ["ejs:github"]
+
+# 可选：为 requests/yt-dlp 设置单个代理（例如: http://user:pass@host:port）
+# 若为空则使用系统环境变量 HTTP_PROXY/HTTPS_PROXY（如已设置）
+YOUTUBE_PROXY = "http://b08ff5c4601004fc4926:12b406e1a432cb34@gw.dataimpulse.com:823"
+
+# 可选：指定浏览器以获取 cookies (例如: 'chrome', 'firefox', 'edge', 'safari' 等)
+# 对应 yt-dlp 的 --cookies-from-browser 参数
+# 如果遇到 "Sign in to confirm you’re not a bot" 错误，请尝试设置此项
+YOUTUBE_COOKIES_FROM_BROWSER = "chrome"

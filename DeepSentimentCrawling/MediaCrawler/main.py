@@ -26,6 +26,7 @@ from media_platform.weibo import WeiboCrawler
 from media_platform.xhs import XiaoHongShuCrawler
 from media_platform.zhihu import ZhihuCrawler
 from media_platform.xueqiu import XueqiuCrawler
+from media_platform.reddit import RedditCrawler
 from media_platform.youtube import YouTubeCrawler
 
 
@@ -39,7 +40,8 @@ class CrawlerFactory:
         "tieba": TieBaCrawler,
         "zhihu": ZhihuCrawler,
         "xueqiu": XueqiuCrawler,
-        "youtube": YouTubeCrawler,
+        "reddit": RedditCrawler,
+        "yt": YouTubeCrawler,
     }
 
     @staticmethod

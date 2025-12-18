@@ -2,39 +2,54 @@ import os
 import logging
 from typing import Optional
 
-# Check if whisper is available
-try:
-    import whisper
-    WHISPER_AVAILABLE = True
-except ImportError:
-    WHISPER_AVAILABLE = False
-
 logger = logging.getLogger("Transcriber")
+
+# Check for FunASR
+try:
+    from funasr import AutoModel
+    FUNASR_AVAILABLE = True
+except ImportError:
+    FUNASR_AVAILABLE = False
 
 class VideoTranscriber:
     _model = None
 
     @classmethod
-    def get_model(cls, model_name="base"):
-        if not WHISPER_AVAILABLE:
-            logger.error("openai-whisper not installed. Please run: pip install openai-whisper")
+    def get_model(cls):
+        if not FUNASR_AVAILABLE:
+            logger.error("funasr not installed. Please run: pip install funasr modelscope torchaudio")
             return None
             
         if cls._model is None:
-            logger.info(f"Loading Whisper model: {model_name} ...")
+            logger.info("Loading SenseVoiceSmall model ...")
             try:
-                cls._model = whisper.load_model(model_name)
-                logger.info("Whisper model loaded successfully.")
+                import torch
+                if torch.cuda.is_available():
+                    device = "cuda"
+                elif torch.backends.mps.is_available():
+                    device = "mps"
+                else:
+                    device = "cpu"
+                
+                logger.info(f"Using device: {device}")
+
+                # Load SenseVoiceSmall
+                cls._model = AutoModel(
+                    model="iic/SenseVoiceSmall",
+                    trust_remote_code=True,
+                    device=device,
+                    disable_update=True
+                )
+                logger.info("SenseVoiceSmall model loaded successfully.")
             except Exception as e:
-                logger.error(f"Failed to load Whisper model: {e}")
+                logger.error(f"Failed to load SenseVoiceSmall model: {e}")
                 return None
         return cls._model
 
     @staticmethod
     def transcribe_video(video_path: str) -> str:
         """
-        Transcribe a video file using OpenAI Whisper.
-        Returns the transcribed text.
+        Transcribe a video file using SenseVoiceSmall.
         """
         if not os.path.exists(video_path):
             logger.error(f"Video file not found: {video_path}")
@@ -46,8 +61,27 @@ class VideoTranscriber:
 
         try:
             logger.info(f"Starting transcription for: {video_path}")
-            result = model.transcribe(video_path)
-            text = result["text"].strip()
+            # SenseVoice uses 'generate' but arguments might slightly differ.
+            # It usually supports language="auto" or specific.
+            res = model.generate(
+                input=video_path,
+                cache={}, 
+                language="auto", # auto detect language
+                use_itn=True,
+                batch_size_s=60,
+                merge_vad=True,
+                merge_length_s=15
+            )
+            
+            # Result parsing
+            text = ""
+            if res and isinstance(res, list):
+                text = res[0].get("text", "")
+            
+            # Clean up text (SenseVoice sometimes includes tags like <|zh|>)
+            import re
+            text = re.sub(r'<\|.*?\|>', '', text).strip()
+            
             logger.info(f"Transcription complete. Length: {len(text)} chars")
             return text
         except Exception as e:
