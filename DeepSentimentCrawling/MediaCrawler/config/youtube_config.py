@@ -8,6 +8,8 @@
 # 详细许可条款请参阅项目根目录下的LICENSE文件。
 # 使用本代码即表示您同意遵守上述原则和LICENSE中的所有条款。
 
+import os
+
 # YouTube crawler config
 
 # detail 模式下指定视频ID列表（video_id, 如: dQw4w9WgXcQ）
@@ -23,25 +25,9 @@ YOUTUBE_ENABLE_TRANSCRIPT = True
 # 需要安装 yt-dlp，且本地ASR需要 funasr 等依赖（见 tools/transcriber.py 日志提示）
 YOUTUBE_ENABLE_AUDIO_FALLBACK = True
 
-# 音频回退下载格式（yt-dlp format selector）
-# 说明：
-# - YouTube 不提供“mp3流”；mp3 只能在本地用 ffmpeg 转码得到（不节省代理流量）。
-# - 想进一步降低代理流量，通常优先选择 opus(webm) 比 m4a 更小：
-#   "bestaudio[acodec^=opus]/bestaudio[ext=m4a]/bestaudio"
-YOUTUBE_AUDIO_FORMAT = "bestaudio[ext=m4a]/bestaudio"
-
-# 可选：下载后用 ffmpeg 转码为指定音频格式（例如 "mp3" / "wav" / "m4a"）
-# - 仅影响本地文件大小与兼容性；不会减少代理下载流量。
-# - 需要系统已安装 ffmpeg（yt-dlp 会调用它）。
-YOUTUBE_AUDIO_POSTPROCESS_CODEC = ""
-
-# 可选：yt-dlp remote components（用于解决 YouTube 的 JS challenge / EJS）
-# 设为空表示不启用；推荐值：["ejs:github"]
-YOUTUBE_REMOTE_COMPONENTS = ["ejs:github"]
-
 # 可选：为 requests/yt-dlp 设置单个代理（例如: http://user:pass@host:port）
 # 若为空则使用系统环境变量 HTTP_PROXY/HTTPS_PROXY（如已设置）
-YOUTUBE_PROXY = "http://b08ff5c4601004fc4926:12b406e1a432cb34@gw.dataimpulse.com:823"
+YOUTUBE_PROXY = os.getenv("YOUTUBE_PROXY")
 
 # 可选：指定浏览器以获取 cookies (例如: 'chrome', 'firefox', 'edge', 'safari' 等)
 # 对应 yt-dlp 的 --cookies-from-browser 参数

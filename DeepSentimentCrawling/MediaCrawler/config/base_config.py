@@ -77,6 +77,18 @@ MAX_CONCURRENCY_NUM = 1
 # 是否开启爬媒体模式（包含图片或视频资源），默认不开启爬媒体
 ENABLE_GET_MEIDAS = True
 
+# ==================== ASR（音频转写）配置 ====================
+# ASR 设备：auto | cpu | mps | cuda
+# - 在 macOS 上使用 mps 可能出现显存/统一内存不足（MPS OOM），可改为 cpu 规避
+ASR_DEVICE = "auto"
+
+# FunASR 推理批处理窗口（秒）。越大越快但越占内存；MPS OOM 时建议调小（例如 10~20）
+ASR_BATCH_SIZE_S = 20
+
+# 将长音频切分后逐段转写（秒）；0 表示不切分
+# - 例如 120 表示每 2 分钟一段，可显著降低峰值内存
+ASR_SPLIT_SECONDS = 0
+
 # 是否开启爬评论模式, 默认开启爬评论
 ENABLE_GET_COMMENTS = True
 

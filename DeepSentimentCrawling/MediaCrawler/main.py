@@ -13,6 +13,9 @@ import asyncio
 import sys
 from typing import Optional
 
+from dotenv import load_dotenv
+load_dotenv()
+
 import cmd_arg
 import config
 import db

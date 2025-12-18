@@ -12,3 +12,4 @@
 from .base_config import *
 from .db_config import *
 from .tieba_config import *
+from .youtube_config import *
