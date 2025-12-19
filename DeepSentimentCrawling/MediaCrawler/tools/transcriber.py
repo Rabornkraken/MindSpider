@@ -82,13 +82,18 @@ class VideoTranscriber:
             "-hide_banner",
             "-loglevel",
             "error",
+            "-y",
             "-i",
             input_path,
+            "-map",
+            "0:a:0",
             "-vn",
             "-ac",
             "1",
             "-ar",
             "16000",
+            "-c:a",
+            "pcm_s16le",
             "-f",
             "segment",
             "-segment_time",
@@ -119,6 +124,46 @@ class VideoTranscriber:
         return segments
 
     @staticmethod
+    def _ffmpeg_convert_to_wav(input_path: str) -> tuple[str, str]:
+        ffmpeg = shutil.which("ffmpeg")
+        if not ffmpeg:
+            logger.warning("ffmpeg not found; using original file for ASR.")
+            return "", ""
+
+        tmpdir = tempfile.mkdtemp(prefix="asr_wav_")
+        out = os.path.join(tmpdir, "audio.wav")
+        cmd = [
+            ffmpeg,
+            "-hide_banner",
+            "-loglevel",
+            "error",
+            "-y",
+            "-i",
+            input_path,
+            "-map",
+            "0:a:0",
+            "-vn",
+            "-ac",
+            "1",
+            "-ar",
+            "16000",
+            "-c:a",
+            "pcm_s16le",
+            out,
+        ]
+        try:
+            subprocess.run(cmd, check=True)
+            if os.path.exists(out):
+                return out, tmpdir
+        except Exception as e:
+            logger.warning(f"ffmpeg convert failed; using original file for ASR: {e}")
+        try:
+            shutil.rmtree(tmpdir, ignore_errors=True)
+        except Exception:
+            pass
+        return "", ""
+
+    @staticmethod
     def transcribe_video(video_path: str) -> str:
         """
         Transcribe a video file using SenseVoiceSmall.
@@ -131,6 +176,7 @@ class VideoTranscriber:
         if not model:
             return ""
 
+        tmpdirs_to_cleanup: list[str] = []
         try:
             try:
                 import config  # MediaCrawler config (optional)
@@ -146,7 +192,14 @@ class VideoTranscriber:
 
             logger.info(f"Starting transcription for: {video_path}")
             segments = VideoTranscriber._ffmpeg_split_to_wav(video_path, split_seconds)
-            inputs = segments if segments else [video_path]
+            if segments:
+                tmpdirs_to_cleanup.append(os.path.dirname(segments[0]))
+                inputs = segments
+            else:
+                wav_path, tmpdir = VideoTranscriber._ffmpeg_convert_to_wav(video_path)
+                if tmpdir:
+                    tmpdirs_to_cleanup.append(tmpdir)
+                inputs = [wav_path] if wav_path else [video_path]
 
             texts: list[str] = []
             for inp in inputs:
@@ -171,16 +224,15 @@ class VideoTranscriber:
             # Clean up text (SenseVoice sometimes includes tags like <|zh|>)
             import re
             text = re.sub(r'<\|.*?\|>', '', text).strip()
-
-            # Cleanup temp split dir if used
-            if segments:
-                try:
-                    shutil.rmtree(os.path.dirname(segments[0]), ignore_errors=True)
-                except Exception:
-                    pass
             
             logger.info(f"Transcription complete. Length: {len(text)} chars")
             return text
         except Exception as e:
             logger.error(f"Transcription failed: {e}")
             return ""
+        finally:
+            for d in tmpdirs_to_cleanup:
+                try:
+                    shutil.rmtree(d, ignore_errors=True)
+                except Exception:
+                    pass
