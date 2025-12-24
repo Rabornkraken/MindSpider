@@ -14,6 +14,7 @@ import asyncio
 import os
 import tempfile
 from typing import Dict, List, Optional, Tuple
+from urllib.parse import urlsplit, urlunsplit
 
 import httpx
 
@@ -42,7 +43,77 @@ class _YtDlpLogger:
 
     def error(self, msg: str) -> None:
         if msg:
+            lowered = msg.lower()
+            if "members-only" in lowered or "join this channel" in lowered or "members on level" in lowered:
+                utils.logger.warning(msg)
+                return
             utils.logger.error(msg)
+
+
+class _CapturingYtDlpLogger:
+    """
+    yt-dlp logger that captures messages without emitting to our app logger.
+    Used for probe extract calls where we decide whether to skip a video (e.g. members-only).
+    """
+
+    def __init__(self) -> None:
+        self.errors: List[str] = []
+        self.warnings: List[str] = []
+
+    def debug(self, msg: str) -> None:  # pragma: no cover
+        return
+
+    def warning(self, msg: str) -> None:
+        if msg:
+            self.warnings.append(msg)
+
+    def error(self, msg: str) -> None:
+        if msg:
+            self.errors.append(msg)
+
+
+def _looks_like_members_only(text: str) -> bool:
+    lowered = (text or "").lower()
+    return (
+        "members-only" in lowered
+        or "join this channel" in lowered
+        or "members on level" in lowered
+        or "channel's members" in lowered
+    )
+
+
+def _extract_video_id_from_entry(entry: Dict) -> str:
+    vid = str(entry.get("id") or "").strip()
+    if vid:
+        return vid
+    url = str(entry.get("url") or "").strip()
+    if url and len(url) == 11 and "://" not in url:
+        return url
+    return extract_youtube_video_id(entry.get("webpage_url") or entry.get("url") or "") or ""
+
+
+def _normalize_creator_url(value: str) -> str:
+    """
+    Normalize a creator/channel URL to a tab that reliably lists uploads.
+    For handle/channel homepages, yt-dlp may return only the channel id; /videos works consistently.
+    """
+    raw = (value or "").strip()
+    if not raw:
+        return raw
+
+    lowered = raw.lower()
+    if "youtube.com" not in lowered:
+        return raw
+    if "/watch" in lowered or "watch?v=" in lowered:
+        return raw
+
+    parts = urlsplit(raw)
+    path = (parts.path or "").rstrip("/")
+    for suffix in ("/videos", "/shorts", "/streams", "/live", "/featured"):
+        if path.lower().endswith(suffix):
+            return raw
+    path = f"{path}/videos"
+    return urlunsplit((parts.scheme, parts.netloc, path, parts.query, parts.fragment))
 
 
 def _normalize_ytdlp_remote_components(value) -> List[str]:
@@ -74,7 +145,7 @@ class YouTubeCrawler(AbstractCrawler):
         elif config.CRAWLER_TYPE == "detail":
             await self.get_specified_videos()
         elif config.CRAWLER_TYPE == "creator":
-            raise NotImplementedError("YouTube creator crawling is not implemented")
+            await self.get_creator_videos()
         else:
             raise ValueError(f"Unsupported crawler type: {config.CRAWLER_TYPE}")
 
@@ -110,7 +181,91 @@ class YouTubeCrawler(AbstractCrawler):
             entry = await asyncio.to_thread(self._ytdlp_extract, f"https://www.youtube.com/watch?v={video_id}", download=False)
             await self._handle_video_entry(entry or {})
 
-    def _ytdlp_extract(self, url_or_search: str, download: bool) -> Dict:
+    async def get_creator_videos(self) -> None:
+        if YoutubeDL is None:
+            raise RuntimeError("yt-dlp not installed.")
+
+        max_count = int(config.CRAWLER_MAX_NOTES_COUNT or 5)
+        creators = (config.KEYWORDS or "").split(",")
+        skip_members_only = bool(getattr(config, "YOUTUBE_SKIP_MEMBERS_ONLY", True))
+        creator_fetch_limit = int(getattr(config, "YOUTUBE_CREATOR_FETCH_LIMIT", 200) or 200)
+        for creator in creators:
+            creator = creator.strip()
+            if not creator:
+                continue
+            
+            source_keyword_var.set(creator)
+            creator_url = _normalize_creator_url(creator)
+            utils.logger.info(f"[YouTubeCrawler.get_creator_videos] crawling: {creator_url}")
+            
+            # Fetch a larger batch to account for potential skips (e.g. members-only videos)
+            # while keeping bandwidth far below MP4 downloads.
+            fetch_limit = max(max_count, creator_fetch_limit)
+            
+            info = await asyncio.to_thread(
+                self._ytdlp_extract, 
+                creator_url,
+                download=False, 
+                noplaylist=False,
+                extract_flat="in_playlist",
+                playlistend=fetch_limit,
+            )
+            
+            entries = (info or {}).get("entries") or []
+            processed_count = 0
+            
+            for entry in entries:
+                if not entry:
+                    continue
+                
+                vid = _extract_video_id_from_entry(entry)
+                if not vid or vid.startswith("UC") or entry.get("_type") == "playlist":
+                    continue
+
+                if skip_members_only:
+                    capture_logger = _CapturingYtDlpLogger()
+                    try:
+                        # Fetch per-video info to detect members-only/private videos and avoid storing them.
+                        full = await asyncio.to_thread(
+                            self._ytdlp_extract,
+                            f"https://www.youtube.com/watch?v={vid}",
+                            download=False,
+                            ignoreerrors=False,
+                            logger=capture_logger,
+                        )
+                    except Exception as e:
+                        joined = "\n".join(capture_logger.errors + capture_logger.warnings + [str(e)])
+                        if _looks_like_members_only(joined):
+                            utils.logger.info(f"[YouTubeCrawler.get_creator_videos] skip members-only: {vid}")
+                            continue
+                        utils.logger.warning(f"[YouTubeCrawler.get_creator_videos] skip unavailable video: {vid} ({e})")
+                        continue
+
+                    if not full:
+                        joined = "\n".join(capture_logger.errors + capture_logger.warnings)
+                        if _looks_like_members_only(joined):
+                            utils.logger.info(f"[YouTubeCrawler.get_creator_videos] skip members-only: {vid}")
+                        continue
+                    if self._is_members_only_video(full):
+                        utils.logger.info(f"[YouTubeCrawler.get_creator_videos] skip members-only: {vid}")
+                        continue
+
+                    await self._handle_video_entry(full)
+                    processed_count += 1
+                else:
+                    await self._handle_video_entry(entry)
+                    processed_count += 1
+                
+                if processed_count >= max_count:
+                    break
+
+            if processed_count < max_count:
+                utils.logger.info(
+                    f"[YouTubeCrawler.get_creator_videos] only got {processed_count}/{max_count} accessible videos "
+                    f"(playlist scanned up to {fetch_limit})"
+                )
+
+    def _ytdlp_extract(self, url_or_search: str, download: bool, **kwargs) -> Dict:
         proxy = getattr(config, "YOUTUBE_PROXY", "") or None
         cookies_browser = getattr(config, "YOUTUBE_COOKIES_FROM_BROWSER", None)
         sub_langs = getattr(config, "YOUTUBE_TRANSCRIPT_LANGS", "zh,en").split(",")
@@ -125,14 +280,28 @@ class YouTubeCrawler(AbstractCrawler):
             "writeautomaticsub": True,
             "subtitleslangs": sub_langs,
             "nocheckcertificate": True,
+            "ignoreerrors": True,
+            "logger": _YtDlpLogger(),
         }
         if remote_components:
             ydl_opts["remote_components"] = remote_components
         if cookies_browser:
             ydl_opts["cookiesfrombrowser"] = (cookies_browser,)
+        
+        # Merge extra options (like playlistend)
+        ydl_opts.update(kwargs)
 
         with YoutubeDL(ydl_opts) as ydl:  # type: ignore[misc]
             return ydl.extract_info(url_or_search, download=download) or {}
+
+    @staticmethod
+    def _is_members_only_video(info: Dict) -> bool:
+        availability = str(info.get("availability") or "").strip().lower()
+        if availability in {"subscriber_only", "members_only", "premium_only", "needs_premium"}:
+            return True
+        if "member" in availability or "subscriber" in availability:
+            return True
+        return False
 
     async def _handle_video_entry(self, entry: Dict) -> None:
         video_id = entry.get("id") or extract_youtube_video_id(entry.get("webpage_url") or "")

@@ -25,6 +25,16 @@ YOUTUBE_ENABLE_TRANSCRIPT = True
 # 需要安装 yt-dlp，且本地ASR需要 funasr 等依赖（见 tools/transcriber.py 日志提示）
 YOUTUBE_ENABLE_AUDIO_FALLBACK = True
 
+# 是否跳过“频道会员专享”等无法访问的视频（members-only）
+YOUTUBE_SKIP_MEMBERS_ONLY = True
+
+# creator 模式下，最多扫描多少个频道视频条目（用于在大量 members-only 时仍能抓到普通视频）
+YOUTUBE_CREATOR_FETCH_LIMIT = 200
+
+# 可选：yt-dlp remote components（用于解决 YouTube 的 JS challenge / EJS）
+# 设为空表示不启用；推荐值：["ejs:github"]
+YOUTUBE_REMOTE_COMPONENTS = ["ejs:github"]
+
 # 可选：为 requests/yt-dlp 设置单个代理（例如: http://user:pass@host:port）
 # 若为空则使用系统环境变量 HTTP_PROXY/HTTPS_PROXY（如已设置）
 YOUTUBE_PROXY = os.getenv("YOUTUBE_PROXY")
