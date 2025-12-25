@@ -186,9 +186,14 @@ class YouTubeCrawler(AbstractCrawler):
             raise RuntimeError("yt-dlp not installed.")
 
         max_count = int(config.CRAWLER_MAX_NOTES_COUNT or 5)
-        creators = (config.KEYWORDS or "").split(",")
+        # 优先使用 YT_CREATOR_ID_LIST，如果为空则回退到 KEYWORDS
+        creators = getattr(config, "YT_CREATOR_ID_LIST", [])
+        if not creators:
+            creators = (config.KEYWORDS or "").split(",")
+            
         skip_members_only = bool(getattr(config, "YOUTUBE_SKIP_MEMBERS_ONLY", True))
         creator_fetch_limit = int(getattr(config, "YOUTUBE_CREATOR_FETCH_LIMIT", 200) or 200)
+        
         for creator in creators:
             creator = creator.strip()
             if not creator:
@@ -199,7 +204,6 @@ class YouTubeCrawler(AbstractCrawler):
             utils.logger.info(f"[YouTubeCrawler.get_creator_videos] crawling: {creator_url}")
             
             # Fetch a larger batch to account for potential skips (e.g. members-only videos)
-            # while keeping bandwidth far below MP4 downloads.
             fetch_limit = max(max_count, creator_fetch_limit)
             
             info = await asyncio.to_thread(
@@ -212,15 +216,27 @@ class YouTubeCrawler(AbstractCrawler):
             )
             
             entries = (info or {}).get("entries") or []
-            processed_count = 0
             
+            # Duplicate Detection
+            candidate_ids = []
+            valid_entries = []
             for entry in entries:
-                if not entry:
-                    continue
-                
+                if not entry: continue
                 vid = _extract_video_id_from_entry(entry)
                 if not vid or vid.startswith("UC") or entry.get("_type") == "playlist":
                     continue
+                candidate_ids.append(vid)
+                valid_entries.append(entry)
+            
+            existing_ids = set(await youtube_store.get_existing_video_ids(candidate_ids))
+            utils.logger.info(f"[YouTubeCrawler] Found {len(valid_entries)} entries. {len(existing_ids)} exist in DB.")
+            
+            processed_count = 0
+            for entry in valid_entries:
+                vid = _extract_video_id_from_entry(entry)
+                if vid in existing_ids:
+                    utils.logger.info(f"[YouTubeCrawler] Encountered existing video: {vid}. Stopping for this creator.")
+                    break
 
                 if skip_members_only:
                     capture_logger = _CapturingYtDlpLogger()

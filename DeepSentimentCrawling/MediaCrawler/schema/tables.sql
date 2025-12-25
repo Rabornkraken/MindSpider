@@ -151,6 +151,7 @@ CREATE TABLE `douyin_aweme`
     `video_download_url`       longtext COMMENT '视频下载地址',
     `music_download_url`       longtext COMMENT '音乐下载地址',
     `note_download_url`        longtext COMMENT '笔记下载地址',
+    `transcription`            longtext COMMENT '视频转写文本',
     PRIMARY KEY (`id`),
     KEY               `idx_douyin_awem_aweme_i_6f7bc6` (`aweme_id`),
     KEY               `idx_douyin_awem_create__299dfe` (`create_time`)
@@ -197,7 +198,7 @@ CREATE TABLE `dy_creator`
     `add_ts`         bigint       NOT NULL COMMENT '记录添加时间戳',
     `last_modify_ts` bigint       NOT NULL COMMENT '记录最后修改时间戳',
     `desc`           longtext COMMENT '用户描述',
-    `gender`         varchar(1)   DEFAULT NULL COMMENT '性别',
+    `gender`         varchar(16)   DEFAULT NULL COMMENT '性别',
     `follows`        varchar(16)  DEFAULT NULL COMMENT '关注数',
     `fans`           varchar(16)  DEFAULT NULL COMMENT '粉丝数',
     `interaction`    varchar(16)  DEFAULT NULL COMMENT '获赞数',

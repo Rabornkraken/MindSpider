@@ -33,3 +33,23 @@ async def update_video_by_video_id(video_id: str, video_item: Dict) -> int:
     async_db_conn: Union[AsyncMysqlDB, AsyncSqliteDB] = media_crawler_db_var.get()
     return await async_db_conn.update_table("youtube_video", video_item, "video_id", video_id)
 
+
+async def get_existing_video_ids(video_ids: List[str]) -> List[str]:
+    """
+    Check which video_ids already exist in the database
+    """
+    if not video_ids:
+        return []
+
+    async_db_conn = media_crawler_db_var.get()
+
+    # Handle parameter placeholder
+    placeholder = "%s" if isinstance(async_db_conn, AsyncMysqlDB) else "?"
+    placeholders = ",".join([placeholder] * len(video_ids))
+
+    sql = f"SELECT video_id FROM youtube_video WHERE video_id IN ({placeholders})"
+
+    # Pass video_ids as positional arguments to query
+    rows = await async_db_conn.query(sql, *video_ids)
+
+    return [row['video_id'] for row in rows]

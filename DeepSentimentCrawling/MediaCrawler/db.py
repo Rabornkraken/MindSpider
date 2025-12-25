@@ -93,6 +93,12 @@ async def ensure_mysql_schema_migrations() -> None:
         "ALTER TABLE douyin_aweme_comment "
         "ADD COLUMN `pictures` VARCHAR(500) NOT NULL DEFAULT '' COMMENT '评论图片列表';",
     )
+    await _ensure_mysql_column(
+        "douyin_aweme",
+        "transcription",
+        "ALTER TABLE douyin_aweme "
+        "ADD COLUMN `transcription` LONGTEXT COMMENT '视频转写文本';",
+    )
 
 
 async def init_mediacrawler_db():

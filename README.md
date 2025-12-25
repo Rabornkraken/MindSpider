@@ -380,12 +380,324 @@ python main.py --deep-sentiment --max-keywords 30 --max-notes 20
 --broad-topic         # 话题提取
 --deep-sentiment      # 爬虫模块
 --complete            # 完整流程
---test                # 测试模式（少量数据）
+--test                #测试模式（少量数据）
 --platforms xhs dy    # 指定平台
 --date 2024-01-15     # 指定日期
 ```
 
+## 定时调度器（Scheduler）
+
+### 功能概述
+
+MindSpider提供了一个生产级的定时调度器，用于**自动化周期性爬取内容创作者的最新发布内容**。适用场景：
+
+- 🔄 监控特定KOL/创作者的持续更新
+- 📊 建立长期的舆情数据库
+- 🚀 实现增量爬取，避免重复处理
+- ⏰ 24/7无人值守运行
+
+### 特性亮点
+
+✅ **智能去重**：单条检测，遇到已存在内容立即停止  
+✅ **自动清理**：每次任务后自动关闭浏览器和数据库连接  
+✅ **容错机制**：异常后自动恢复，不影响后续任务  
+✅ **多平台支持**：目前支持抖音(dy)和YouTube(yt)  
+✅ **配置灵活**：可自定义爬取间隔和目标创作者  
+
+### 快速开始
+
+#### 1. 配置创作者列表
+
+**抖音（Douyin）**
+
+编辑 `DeepSentimentCrawling/MediaCrawler/config/dy_config.py`:
+
+```python
+# 指定抖音用户ID列表（支持短链接或sec_uid）
+DY_CREATOR_ID_LIST = [
+    "https://v.douyin.com/h_jxidKie7g/",  # 短链接
+    "https://v.douyin.com/mp5dWB323NE/", 
+    # 或直接使用 sec_uid
+    "MS4wLjABAAAA3GSIH7t0qsmwWzdxKG2hZ9tnRqeurpqpzbhOAICrPnA",
+]
+```
+
+**YouTube**
+
+编辑 `DeepSentimentCrawling/MediaCrawler/config/youtube_config.py`:
+
+```python
+# 指定YouTube频道URL列表
+YT_CREATOR_ID_LIST = [
+    "https://www.youtube.com/@小左美股第一视角/videos",
+    "https://www.youtube.com/@GoogleDeepMind",
+    "https://www.youtube.com/@OpenAI",
+]
+```
+
+#### 2. 设置爬取间隔
+
+编辑 `DeepSentimentCrawling/MediaCrawler/.env`:
+
+```bash
+# 设置爬取间隔（秒），默认3600（1小时）
+SCHEDULE_INTERVAL=3600
+
+# 其他示例：
+# SCHEDULE_INTERVAL=1800   # 30分钟
+# SCHEDULE_INTERVAL=7200   # 2小时
+# SCHEDULE_INTERVAL=86400  # 24小时
+```
+
+#### 3. 启动调度器
+
+```bash
+cd DeepSentimentCrawling/MediaCrawler
+python scheduler.py
+```
+
+### 工作原理
+
+```mermaid
+flowchart TB
+    Start[启动调度器] --> Init[初始化配置]
+    Init --> Loop{开始循环}
+    
+    Loop --> DY[抖音任务]
+    DY --> DY_Init[初始化数据库]
+    DY_Init --> DY_Crawl[打开浏览器]
+    DY_Crawl --> DY_Login{需要登录?}
+    DY_Login -->|是| DY_QR[CDP模式/扫码]
+    DY_Login -->|否| DY_Fetch[获取创作者视频列表]
+    DY_QR --> DY_Fetch
+    
+    DY_Fetch --> DY_Check{检测单条视频}
+    DY_Check -->|新视频| DY_Process[下载+转写+保存]
+    DY_Process --> DY_Check
+    DY_Check -->|已存在| DY_Stop[停止此创作者]
+    DY_Stop --> DY_Clean[关闭浏览器+数据库]
+    
+    DY_Clean --> Sleep1[等5秒]
+    Sleep1 --> YT[YouTube任务]
+    
+    YT --> YT_Init[初始化数据库]
+    YT_Init --> YT_Fetch[获取频道视频列表]
+    YT_Fetch --> YT_Check{检测单条视频}
+    YT_Check -->|新视频| YT_Process[字幕提取+保存]
+    YT_Process --> YT_Check
+    YT_Check -->|已存在| YT_Stop[停止此频道]
+    YT_Stop --> YT_Clean[关闭数据库]
+    
+    YT_Clean --> Sleep2[等待下一周期]
+    Sleep2 --> Loop
+    
+    style Start fill:#90EE90
+    style DY fill:#87CEEB
+    style YT fill:#FFB6C1
+    style DY_Stop fill:#FFD700
+    style YT_Stop fill:#FFD700
+```
+
+### 核心机制说明
+
+#### 1. 智能增量爬取
+
+调度器实现了**逐条检测**的去重策略：
+
+```python
+# 伪代码示例
+for video in creator_videos:
+    if exists_in_database(video.id):
+        log("遇到已存在视频，停止")
+        break  # 立即停止！
+    else:
+        download_and_save(video)
+```
+
+**优势**：
+- 假设创作者发布了5个新视频
+- 传统方式：获取全部 → 批量检测 → 过滤重复（浪费API调用）
+- 智能方式：检测第1个 ✓ → 检测第2个 ✓ → ... → 检测第6个 ✗ 停止！
+
+#### 2. 资源管理
+
+每次任务完成后，**必定**执行清理：
+
+```python
+try:
+    # 爬取逻辑
+    await crawler.start()
+finally:
+    # 无论成功失败，都会执行
+    await crawler.close()      # 关闭浏览器
+    await db.close()           # 关闭数据库
+    await shutdown_caches()    # 清理缓存
+```
+
+#### 3. 平台配置
+
+调度器默认爬取两个平台，可在 `scheduler.py` 中修改：
+
+```python
+# 修改这一行来调整爬取的平台
+PLATFORMS_TO_CRAWL = ["dy", "yt"]  
+
+# 可选值："xhs", "dy", "ks", "bili", "wb", "tieba", "zhihu", "yt"
+```
+
+### 监控和日志
+
+#### 查看运行日志
+
+调度器运行时会输出详细日志：
+
+```log
+2025-12-24 15:50:14 MediaCrawler INFO [dy] >>> Starting periodic crawl task
+2025-12-24 15:50:14 MediaCrawler INFO [dy] Initializing database connection...
+2025-12-24 15:50:15 MediaCrawler INFO [dy] Creating crawler instance...
+2025-12-24 15:50:18 MediaCrawler INFO [DouYinCrawler] Found new video 7587314631517998377 (1/10)
+2025-12-24 15:50:20 MediaCrawler INFO [DouYinCrawler] Found new video 7587311995520503082 (2/10)
+2025-12-24 15:50:22 MediaCrawler INFO [DouYinCrawler] Encountered existing video 7586999999 in DB. Stopping
+2025-12-24 15:50:23 MediaCrawler INFO [dy] Closing crawler...
+2025-12-24 15:50:23 MediaCrawler INFO [dy] Database connection closed
+2025-12-24 15:50:23 MediaCrawler INFO [dy] <<< Finished periodic crawl task
+```
+
+#### 关键日志指标
+
+| 日志关键词 | 含义 |
+|----------|------|
+| `Found new video` | 发现新内容 |
+| `Encountered existing video` | 遇到重复，触发停止 |
+| `Processing X new videos` | 开始处理X个新视频 |
+| `Crawler closed successfully` | 浏览器正常关闭 |
+| `Full cycle complete in Xs` | 完整周期耗时 |
+
+### 生产环境部署
+
+#### 使用systemd（Linux）
+
+创建服务文件 `/etc/systemd/system/mindspider-scheduler.service`:
+
+```ini
+[Unit]
+Description=MindSpider Periodic Scheduler
+After=network.target mysql.service
+
+[Service]
+Type=simple
+User=your_user
+WorkingDirectory=/path/to/MindSpider/DeepSentimentCrawling/MediaCrawler
+Environment="PATH=/home/your_user/miniconda3/envs/pytorch_python11/bin"
+ExecStart=/home/your_user/miniconda3/envs/pytorch_python11/bin/python scheduler.py
+Restart=always
+RestartSec=10
+
+[Install]
+WantedBy=multi-user.target
+```
+
+启动服务：
+
+```bash
+sudo systemctl daemon-reload
+sudo systemctl enable mindspider-scheduler
+sudo systemctl start mindspider-scheduler
+
+# 查看状态
+sudo systemctl status mindspider-scheduler
+
+# 查看日志
+sudo journalctl -u mindspider-scheduler -f
+```
+
+#### 使用screen（快速方案）
+
+```bash
+# 创建后台会话
+screen -S mindspider
+
+# 进入MediaCrawler目录
+cd DeepSentimentCrawling/MediaCrawler
+
+# 启动调度器
+python scheduler.py
+
+# 按 Ctrl+A 然后按 D 分离会话
+
+# 重新连接
+screen -r mindspider
+```
+
+### 常见问题
+
+#### Q: 如何停止调度器？
+**A**: 按 `Ctrl+C` 或发送 SIGINT 信号。调度器会优雅退出。
+
+#### Q: 调度器崩溃了怎么办？
+**A**: 调度器会自动从下一个周期恢复。建议配合systemd使用，实现自动重启。
+
+#### Q: 如何只监控某个创作者？
+**A**: 在配置文件中只保留该创作者的ID/URL即可。
+
+#### Q: 可以同时监控100个创作者吗？
+**A**: 可以，但建议：
+- 调整 `CRAWLER_MAX_NOTES_COUNT` 为较小值（如5）
+- 增加 `SCHEDULE_INTERVAL`（如每4小时）
+- 监控数据库性能
+
+#### Q: YouTube需要代理吗？
+**A**: 
+- 国内需要设置代理
+- 方法1：编辑 `config/youtube_config.py` 设置 `YOUTUBE_PROXY`
+- 方法2：设置环境变量 `HTTP_PROXY` 和 `HTTPS_PROXY`
+
+### 高级配置
+
+#### 调整单个创作者的爬取数量
+
+编辑 `DeepSentimentCrawling/MediaCrawler/config/base_config.py`:
+
+```python
+# 每个创作者最多爬取多少条新内容
+CRAWLER_MAX_NOTES_COUNT = 10  # 建议5-20
+```
+
+#### 禁用特定平台
+
+修改 `scheduler.py`:
+
+```python
+# 只爬YouTube
+PLATFORMS_TO_CRAWL = ["yt"]
+
+# 只爬抖音
+PLATFORMS_TO_CRAWL = ["dy"]
+```
+
+#### 启用CDP模式（抖音推荐）
+
+编辑 `DeepSentimentCrawling/MediaCrawler/config/base_config.py`:
+
+```python
+ENABLE_CDP_MODE = True  # 使用本地Chrome浏览器
+CDP_HEADLESS = False    # 是否无头模式
+AUTO_CLOSE_BROWSER = True  # 任务后自动关闭
+```
+
+### 性能建议
+
+| 创作者数量 | 建议间隔 | 单次爬取量 |
+|---------|---------|-----------|
+| 1-10 | 1小时 | 10条 |
+| 10-50 | 2-4小时 | 5条 |
+| 50-100 | 6-12小时 | 3条 |
+| 100+ | 24小时 | 1-2条 |
+
+---
+
 ## 支持的平台
+
 
 | 代码 | 平台 | 代码 | 平台 |
 |-----|-----|-----|-----|

@@ -52,13 +52,19 @@ class VideoTranscriber:
                 logger.info(f"Using device: {device}")
 
                 # Load SenseVoiceSmall
+                # Use absolute local path to prevent re-downloading
+                model_path = "/Users/pan/.cache/modelscope/hub/models/iic/SenseVoiceSmall"
+                if not os.path.exists(model_path):
+                     # Fallback to ID if local path doesn't exist (though we just verified it does)
+                    model_path = "iic/SenseVoiceSmall"
+
                 cls._model = AutoModel(
-                    model="iic/SenseVoiceSmall",
+                    model=model_path,
                     trust_remote_code=True,
                     device=device,
                     disable_update=True
                 )
-                logger.info("SenseVoiceSmall model loaded successfully.")
+                logger.info(f"SenseVoiceSmall model loaded from {model_path}")
             except Exception as e:
                 logger.error(f"Failed to load SenseVoiceSmall model: {e}")
                 return None

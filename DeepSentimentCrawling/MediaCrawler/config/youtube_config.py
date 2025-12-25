@@ -15,6 +15,11 @@ import os
 # detail 模式下指定视频ID列表（video_id, 如: dQw4w9WgXcQ）
 YT_SPECIFIED_ID_LIST = []
 
+# creator 模式下指定频道URL列表
+YT_CREATOR_ID_LIST = [
+    "https://www.youtube.com/@小左美股第一视角/videos",
+]
+
 # 优先尝试的字幕语言（逗号分隔）；会优先选择“人工字幕”，否则选择“自动字幕”
 YOUTUBE_TRANSCRIPT_LANGS = "zh-Hans,zh-Hant,zh,en"
 

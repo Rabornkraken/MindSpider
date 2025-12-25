@@ -15,6 +15,7 @@ from base.base_crawler import AbstractStore
 from tools import utils
 
 from .youtube_store_impl import YouTubeCsvStoreImplement, YouTubeDbStoreImplement, YouTubeSqliteStoreImplement
+from .youtube_store_sql import get_existing_video_ids
 
 
 class YouTubeStoreFactory:

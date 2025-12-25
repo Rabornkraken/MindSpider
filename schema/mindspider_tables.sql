@@ -120,7 +120,8 @@ ADD COLUMN `crawling_task_id` varchar(64) DEFAULT NULL COMMENT '关联的爬取�
 -- 为抖音视频表添加话题关联字段
 ALTER TABLE `douyin_aweme` 
 ADD COLUMN `topic_id` varchar(64) DEFAULT NULL COMMENT '关联的话题ID',
-ADD COLUMN `crawling_task_id` varchar(64) DEFAULT NULL COMMENT '关联的爬取任务ID';
+ADD COLUMN `crawling_task_id` varchar(64) DEFAULT NULL COMMENT '关联的爬取任务ID',
+ADD COLUMN `transcription` longtext DEFAULT NULL COMMENT '视频语音转文字内容';
 
 -- 为快手视频表添加话题关联字段
 ALTER TABLE `kuaishou_video` 

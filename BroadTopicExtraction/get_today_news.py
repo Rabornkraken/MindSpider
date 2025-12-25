@@ -23,7 +23,7 @@ except ImportError as e:
     raise ImportError(f"导入模块失败: {e}")
 
 # 新闻API基础URL
-BASE_URL = "http://localhost:4444"
+BASE_URL = "https://newsnow.busiyi.world"
 
 # 新闻源中文名称映射
 SOURCE_NAMES = {
@@ -72,7 +72,10 @@ class NewsCollector:
     async def fetch_news(self, source: str) -> dict:
         """从指定源获取最新新闻"""
         url = f"{BASE_URL}/api/s?id={source}&latest"
-        headers = {"Accept": "application/json"}
+        headers = {
+            "Accept": "application/json",
+            "User-Agent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
+        }
         
         try:
             async with httpx.AsyncClient(timeout=30.0) as client:

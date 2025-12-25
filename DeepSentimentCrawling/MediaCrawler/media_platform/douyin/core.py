@@ -82,7 +82,7 @@ class DouYinCrawler(AbstractCrawler):
             stealth = Stealth()
             await stealth.apply_stealth_async(self.browser_context)
             self.context_page = await self.browser_context.new_page()
-            await self.context_page.goto(self.index_url)
+            await self.context_page.goto(self.index_url, timeout=120000)
 
             self.dy_client = await self.create_douyin_client(httpx_proxy_format)
             if not await self.dy_client.pong(browser_context=self.browser_context):
@@ -243,26 +243,54 @@ class DouYinCrawler(AbstractCrawler):
                 if creator_info:
                     await douyin_store.save_creator(sec_user_id, creator=creator_info)
 
-                # Get latest videos (first page only) to optimize for updates
-                aweme_post_res = await self.dy_client.get_user_aweme_posts(sec_user_id)
-                all_video_list = aweme_post_res.get("aweme_list", [])
+                # Get latest videos with one-by-one duplicate checking
+                max_count = int(config.CRAWLER_MAX_NOTES_COUNT or 10)
+                aweme_list: List[Dict] = []
+                max_cursor = ""
+                stop_crawling = False
                 
-                # Limit to 5 most recent
-                all_video_list = all_video_list[:5]
+                while len(aweme_list) < max_count and not stop_crawling:
+                    aweme_post_res = await self.dy_client.get_user_aweme_posts(sec_user_id, max_cursor=max_cursor)
+                    batch = aweme_post_res.get("aweme_list", [])
+                    if not batch:
+                        break
+                    
+                    # Check duplicates one by one for immediate early stopping
+                    for video in batch:
+                        aweme_id = video.get('aweme_id')
+                        if not aweme_id:
+                            continue
+                        
+                        # Check if this single video exists in DB
+                        existing = await douyin_store.get_existing_aweme_ids([aweme_id])
+                        
+                        if existing:
+                            # Found a duplicate! Stop immediately
+                            utils.logger.info(f"[DouYinCrawler] Encountered existing video {aweme_id} in DB. Stopping for creator {sec_user_id}")
+                            stop_crawling = True
+                            break
+                        
+                        # New video, add to list
+                        aweme_list.append(video)
+                        utils.logger.info(f"[DouYinCrawler] Found new video {aweme_id} ({len(aweme_list)}/{max_count})")
+                        
+                        if len(aweme_list) >= max_count:
+                            stop_crawling = True
+                            break
+                    
+                    if stop_crawling:
+                        break
+                        
+                    # Continue to next page if needed
+                    if not aweme_post_res.get("has_more"):
+                        break
+                    max_cursor = aweme_post_res.get("max_cursor", "")
                 
-                if all_video_list:
-                    # Duplicate Detection
-                    candidate_ids = [v['aweme_id'] for v in all_video_list]
-                    existing_ids = await douyin_store.get_existing_aweme_ids(candidate_ids)
-                    
-                    new_videos = [v for v in all_video_list if v['aweme_id'] not in existing_ids]
-                    
-                    utils.logger.info(f"[DouYinCrawler] Found {len(all_video_list)} recent videos. {len(existing_ids)} exist in DB. Processing {len(new_videos)} new videos.")
-                    
-                    if new_videos:
-                        await self.fetch_creator_video_detail(new_videos)
+                if aweme_list:
+                    utils.logger.info(f"[DouYinCrawler] Processing {len(aweme_list)} new videos for creator {sec_user_id}")
+                    await self.fetch_creator_video_detail(aweme_list)
                 else:
-                    utils.logger.info(f"[DouYinCrawler] No videos found for creator {sec_user_id}")
+                    utils.logger.info(f"[DouYinCrawler] No new videos found for creator {sec_user_id}")
 
             except DataFetchError as ex:
                 # If the JSON API is blocked/empty, fall back to browser-only extraction for 1 video.
@@ -433,7 +461,7 @@ class DouYinCrawler(AbstractCrawler):
                 return
 
         page.on("response", on_response)
-        await page.goto(video_page_url, wait_until="domcontentloaded", timeout=60_000)
+        await page.goto(video_page_url, wait_until="domcontentloaded", timeout=120000)
 
         # Some pages only start requesting media after play; attempt to trigger playback.
         try:
